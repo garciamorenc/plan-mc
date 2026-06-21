@@ -197,8 +197,7 @@ const DATA = {
      items:[{n:'Tortitas de maíz',m:0,c:30},{n:'Lomo embuchado',m:0,c:60}]},
     {slot:'Comida',time:'14:00',dish:'Ensalada de edamame, garbanzos y pavo',
      prep:[{who:'ambos',t:'Cocina la pechuga de pavo y trocéala. Mezcla la espinaca, el edamame, los garbanzos, el feta y el aguacate; añade el pavo y la manzana en dados.'}],
-     items:[{n:'Espinaca',m:30,c:30},{n:'Edamame',m:40,c:40},{n:'Garbanzo cocido (Aldi)',m:40,c:40},
-       {n:'Garbanzos cocidos en bote',m:110,c:110},{n:'Queso feta',m:20,c:20},{n:'Aguacate',m:50,c:50},
+     items:[{n:'Espinaca',m:30,c:30},{n:'Edamame',m:40,c:40},{n:'Garbanzos cocidos',m:150,c:150},{n:'Queso feta',m:20,c:20},{n:'Aguacate',m:50,c:50},
        {n:'Pechuga de pavo',m:170,c:200},{n:'Manzana',m:90,c:90,note:'En vez de la granada'},{n:'Nueces',m:0,c:15}]},
     {slot:'Pre-entreno',time:'',dish:'',
      items:[{n:'Plátano',m:160,c:160,note:'Solo si entrenáis'},{n:'Tortitas de maíz',m:15,c:0},
@@ -288,13 +287,11 @@ const state={day:'L',view:'conjunta',hideHave:false,checked:new Set(),prep:new S
   state.day=map[new Date().getDay()]||'L';
   try{
     const s=JSON.parse(localStorage.getItem(STORE)||'{}');
-    if(s.view) state.view=s.view;
-    if(s.day && DATA[s.day]) state.day=s.day;
     if(Array.isArray(s.checked)) state.checked=new Set(s.checked);
   }catch(e){}
 })();
 function save(){
-  try{ localStorage.setItem(STORE, JSON.stringify({day:state.day,view:state.view,checked:[...state.checked]})); }catch(e){}
+  try{ localStorage.setItem(STORE, JSON.stringify({checked:[...state.checked]})); }catch(e){}
 }
 
 const $main=document.getElementById('main');
