@@ -9,8 +9,11 @@ import {
 } from 'https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js';
 
 import { firebaseConfig, ALLOWED_UIDS } from './firebase-config.js';
-import { DATA, DAYS_ORDER, DAY_NAMES } from './data.js';
-import { CATALOG, CATEGORIES, CATEGORY_ICON, RECIPE_IDS, slug, categoryFor } from './catalog.js';
+import { DATA as SEED_PLAN, DAYS_ORDER, DAY_NAMES } from './data.js';
+import {
+  CATALOG, CATEGORIES, CATEGORY_ICON, RECIPE_IDS,
+  slug, categoryFor, rebuild as rebuildCatalog, seedCategoriesFromPlan
+} from './catalog.js';
 
 // ---------- Firebase init ----------
 const app = initializeApp(firebaseConfig);
@@ -18,6 +21,8 @@ const auth = getAuth(app);
 const db   = getFirestore(app);
 enableIndexedDbPersistence(db).catch(()=>{}); // ignora si ya activo o multi-tab
 const STATE_DOC = doc(db, 'state', 'main');
+const PLAN_DOC = doc(db, 'plan', 'current');
+const CAT_DOC = doc(db, 'categories', 'main');
 
 // ---------- Local state ----------
 const CHK = '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>';
@@ -30,7 +35,11 @@ const local = {
   prep: new Set(),
   tab: 'comidas',
 };
-const cloud = { pantry: {}, cooked: {}, skipped: {}, dayMap: {}, cycleStartedAt: null, ready: false };
+const cloud = {
+  pantry: {}, cooked: {}, skipped: {}, dayMap: {}, cycleStartedAt: null,
+  plan: null, categories: {},
+  ready: false, planReady: false, catReady: false,
+};
 let currentUid = null;
 let autoCookDone = false;
 
@@ -137,9 +146,9 @@ function showGate(msg){
   $gateMsg.textContent = msg;
 }
 
-// ---------- Firestore listener ----------
+// ---------- Firestore listeners ----------
 function subscribeState(){
-  // Crear el documento si no existe (primer arranque).
+  // state/main: estado dinámico (despensa, cooked, skipped, dayMap, ciclo).
   onSnapshot(STATE_DOC, async (snap) => {
     if(!snap.exists()){
       try{
@@ -160,18 +169,61 @@ function subscribeState(){
     cloud.cycleStartedAt = d.cycleStartedAt || null;
     cloud.ready = true;
     render();
-    if(!autoCookDone){
-      autoCookDone = true;
-      (async () => {
-        const wasReset = await maybeAutoReset();
-        if(wasReset){
-          autoCookDone = false; // dejar que el snapshot con el nuevo cycleStartedAt re-dispare flujo
-        } else {
-          autoCookPastDays().catch(e => console.error('autoCook', e));
-        }
-      })();
+    maybeBootAutoCook();
+  }, (err) => console.error('state snapshot', err));
+
+  // plan/current: el plan semanal de comidas, editable.
+  onSnapshot(PLAN_DOC, async (snap) => {
+    if(!snap.exists()){
+      try{
+        await setDoc(PLAN_DOC, {
+          plan: SEED_PLAN,
+          updatedAt: serverTimestamp(),
+          updatedBy: currentUid,
+        });
+      }catch(e){ console.error('No se pudo crear plan/current', e); }
+      return;
     }
-  }, (err) => console.error('snapshot', err));
+    const d = snap.data() || {};
+    cloud.plan = d.plan || SEED_PLAN;
+    cloud.planReady = true;
+    rebuildCatalog(cloud.plan, cloud.categories);
+    render();
+    maybeBootAutoCook();
+  }, (err) => console.error('plan snapshot', err));
+
+  // categories/main: id ingrediente → categoría (editable cuando añades ingredientes nuevos).
+  onSnapshot(CAT_DOC, async (snap) => {
+    if(!snap.exists()){
+      try{
+        await setDoc(CAT_DOC, {
+          ingredients: seedCategoriesFromPlan(SEED_PLAN),
+          updatedAt: serverTimestamp(),
+          updatedBy: currentUid,
+        });
+      }catch(e){ console.error('No se pudo crear categories/main', e); }
+      return;
+    }
+    const d = snap.data() || {};
+    cloud.categories = d.ingredients || {};
+    cloud.catReady = true;
+    rebuildCatalog(cloud.plan, cloud.categories);
+    render();
+  }, (err) => console.error('categories snapshot', err));
+}
+
+function maybeBootAutoCook(){
+  if(autoCookDone) return;
+  if(!cloud.ready || !cloud.planReady) return; // necesitamos plan para calcular consumiciones
+  autoCookDone = true;
+  (async () => {
+    const wasReset = await maybeAutoReset();
+    if(wasReset){
+      autoCookDone = false;
+    } else {
+      autoCookPastDays().catch(e => console.error('autoCook', e));
+    }
+  })();
 }
 
 // ---------- Cálculos ----------
@@ -264,7 +316,7 @@ function computeDemand(){
   const demand = {};
   for(const viewDay of DAYS_ORDER){
     const src = sourceDay(viewDay);
-    const meals = DATA[src]?.meals || [];
+    const meals = cloud.plan?.[src]?.meals || [];
     for(const meal of meals){
       if(meal.free || !meal.items) continue;
       const k = mealKey(src, meal.slot);
@@ -296,7 +348,7 @@ function computeShoppingList(){
 
 // Devuelve los ingredientes consumidos para una comida según las personas indicadas.
 function mealConsumption(day, slot, persons){
-  const meal = (DATA[day]?.meals||[]).find(m => m.slot === slot);
+  const meal = (cloud.plan?.[day]?.meals||[]).find(m => m.slot === slot);
   const out = {};
   if(!meal || !meal.items) return out;
   const wantM = persons.includes('m');
@@ -412,7 +464,7 @@ async function autoCookPastDays(){
   for(const viewDay of DAYS_ORDER){
     if(!isPastDay(viewDay)) continue;
     const src = sourceDay(viewDay);
-    const meals = DATA[src]?.meals || [];
+    const meals = cloud.plan?.[src]?.meals || [];
     for(const meal of meals){
       if(meal.free || !meal.items) continue;
       const k = mealKey(src, meal.slot);
@@ -568,7 +620,7 @@ const $header = document.getElementById('header');
 const $tabbar = document.getElementById('tabbar');
 
 function render(){
-  if(!cloud.ready){ $main.innerHTML = '<div class="loading">Cargando…</div>'; return; }
+  if(!cloud.ready || !cloud.planReady){ $main.innerHTML = '<div class="loading">Cargando…</div>'; return; }
   $tabbar.querySelectorAll('button').forEach(b => {
     b.setAttribute('aria-pressed', b.dataset.tab === local.tab);
   });
@@ -613,7 +665,7 @@ function renderComidas(){
     [...local.mise].forEach(k => { if(k.startsWith(pre)) local.mise.delete(k); });
     saveLocal(); render();
   };
-  const day = DATA[src];
+  const day = cloud.plan?.[src];
   const miseKey = (mi, ii) => local.day + '.' + mi + '.' + ii;
 
   const visibleItems = (meal) => (meal.items||[]).filter(it => {
@@ -831,7 +883,7 @@ function renderAjustes(){
     <p class="ajustes-help">Desactiva las comidas que NO vayáis a cocinar esta semana. Cada fila es una persona; los chips atenuados son comidas en las que esa persona no come.</p>`;
   for(const d of DAYS_ORDER){
     const src = sourceDay(d);
-    const meals = (DATA[src]?.meals || []).filter(m => !m.free && m.items);
+    const meals = (cloud.plan?.[src]?.meals || []).filter(m => !m.free && m.items);
     if(meals.length === 0) continue;
     html += `<div class="plan-day"><span class="plan-day-name">${DAY_NAMES[d]}${src!==d?` <small>(de ${DAY_NAMES[src]})</small>`:''}</span>`;
     for(const person of ['m','c']){
@@ -872,6 +924,12 @@ function renderAjustes(){
   }
   html += `</ul></section>`;
 
+  html += `<section class="card cat-card"><div class="cat-title"><span class="cat-ic">✏️</span>Plan de comidas</div>
+    <p class="ajustes-help">Edita las recetas, ingredientes, cantidades y preparaciones. Al guardar se archiva el plan anterior y se reinicia la semana.</p>
+    <div class="ajustes-actions">
+      <button id="edit-plan-btn" class="btn-secondary">Abrir editor</button>
+    </div></section>`;
+
   html += `<section class="card cat-card"><div class="cat-title"><span class="cat-ic">🔄</span>Ciclo semanal</div>
     <p class="ajustes-help">Cada lunes el ciclo se reinicia automáticamente (cocinadas y desactivaciones de planificación se borran). Si necesitas forzar un reinicio mid-semana, púlsalo aquí.</p>
     <div class="ajustes-actions">
@@ -889,6 +947,7 @@ function renderAjustes(){
     b.onclick = () => toggleSkipped(b.dataset.day, b.dataset.slot, [b.dataset.person]);
   });
   document.getElementById('new-week-btn-ajustes').onclick = startNewWeek;
+  document.getElementById('edit-plan-btn').onclick = openEditor;
   $main.querySelectorAll('.swap-sel').forEach(sel => {
     sel.onchange = (e) => {
       const d = sel.dataset.day;
@@ -925,3 +984,316 @@ function onAdd(){
 $tabbar.querySelectorAll('button').forEach(b => {
   b.onclick = () => { local.tab = b.dataset.tab; saveLocal(); render(); };
 });
+
+// ---------- Editor del plan ----------
+const $editor = document.getElementById('editor');
+const $edChips = document.getElementById('ed-chips');
+const $edMain = document.getElementById('ed-main');
+const $edSave = document.getElementById('ed-save');
+const $edCancel = document.getElementById('ed-cancel');
+
+const deepCopy = (o) => JSON.parse(JSON.stringify(o));
+
+function openEditor(){
+  local.editor = {
+    open: true,
+    draft: deepCopy(cloud.plan),
+    cats: deepCopy(cloud.categories || {}),
+    day: local.day,
+  };
+  $appRoot.hidden = true;
+  $editor.hidden = false;
+  renderEditor();
+}
+
+function isEditorDirty(){
+  const e = local.editor;
+  if(!e) return false;
+  return JSON.stringify(e.draft) !== JSON.stringify(cloud.plan)
+      || JSON.stringify(e.cats) !== JSON.stringify(cloud.categories || {});
+}
+
+function closeEditor(){
+  if(isEditorDirty() && !confirm('Hay cambios sin guardar. ¿Descartarlos?')) return;
+  local.editor = null;
+  $editor.hidden = true;
+  $appRoot.hidden = false;
+  render();
+}
+
+$edCancel.onclick = closeEditor;
+$edSave.onclick = () => savePlan();
+
+function renderEditor(){
+  // Day chips
+  $edChips.innerHTML = '';
+  for(const d of DAYS_ORDER){
+    const b = document.createElement('button');
+    b.className = 'chip' + (d === local.editor.day ? ' active' : '');
+    b.textContent = d;
+    b.setAttribute('aria-label', DAY_NAMES[d]);
+    b.onclick = () => { local.editor.day = d; renderEditor(); };
+    $edChips.appendChild(b);
+  }
+
+  // Save button dirty state
+  $edSave.classList.toggle('dirty', isEditorDirty());
+
+  const day = local.editor.day;
+  const dayPlan = local.editor.draft[day] || { meals: [] };
+  if(!dayPlan.meals) dayPlan.meals = [];
+  let html = '';
+  dayPlan.meals.forEach((meal, mi) => {
+    const isFree = !!meal.free;
+    html += `<section class="ed-meal" data-mi="${mi}">
+      <div class="ed-meal-head">
+        <input class="ed-meal-slot" data-field="slot" value="${escAttr(meal.slot||'')}" placeholder="Slot (Comida, Cena…)" />
+        <input class="ed-meal-time" data-field="time" value="${escAttr(meal.time||'')}" placeholder="hh:mm" />
+        <button class="ed-trash" data-action="del-meal" title="Eliminar comida">🗑</button>
+      </div>
+      ${isFree ? '' : `<input class="ed-meal-dish" data-field="dish" value="${escAttr(meal.dish||'')}" placeholder="Nombre del plato" />`}
+      <div class="ed-free-row">
+        <input type="checkbox" id="free-${mi}" data-action="toggle-free" ${isFree?'checked':''} />
+        <label for="free-${mi}">Comida libre (sin ingredientes ni preparación)</label>
+      </div>`;
+    if(isFree){
+      html += `<input class="ed-free-msg" data-field="free" value="${escAttr(typeof meal.free === 'string' ? meal.free : 'Comida libre')}" placeholder="Mensaje" />`;
+    } else {
+      // Items
+      html += `<div class="ed-section-title">Ingredientes</div><ul class="ed-items">`;
+      const items = meal.items || [];
+      items.forEach((it, ii) => {
+        html += `<li class="ed-item" data-ii="${ii}">
+          <input class="ed-item-name" data-field="n" value="${escAttr(it.n||'')}" placeholder="Nombre del ingrediente" />
+          <div class="ed-item-row">
+            <span class="ed-q-lbl m">M</span>
+            <input class="ed-q" type="number" inputmode="numeric" min="0" data-field="m" value="${it.m||0}" />
+            <span class="ed-q-lbl c">C</span>
+            <input class="ed-q" type="number" inputmode="numeric" min="0" data-field="c" value="${it.c||0}" />
+            <select class="ed-unit" data-field="u">
+              <option value="g" ${(!it.u||it.u==='g')?'selected':''}>g</option>
+              <option value="ml" ${it.u==='ml'?'selected':''}>ml</option>
+            </select>
+            <button class="ed-trash" data-action="del-item">🗑</button>
+          </div>
+          <input class="ed-item-note" data-field="note" value="${escAttr(it.note||'')}" placeholder="Nota (opcional)" />
+        </li>`;
+      });
+      html += `</ul>
+        <button class="ed-add-btn" data-action="add-item">+ Ingrediente</button>`;
+
+      // Prep
+      html += `<div class="ed-section-title">Preparación</div><ul class="ed-prep">`;
+      const prep = meal.prep || [];
+      prep.forEach((s, si) => {
+        html += `<li class="ed-prep-step" data-si="${si}">
+          <select class="ed-step-who" data-field="who">
+            <option value="ambos" ${s.who==='ambos'?'selected':''}>Ambos</option>
+            <option value="maria" ${s.who==='maria'?'selected':''}>María</option>
+            <option value="carlos" ${s.who==='carlos'?'selected':''}>Carlos</option>
+          </select>
+          <textarea class="ed-step-text" data-field="t" placeholder="Paso de la preparación">${escText(s.t||'')}</textarea>
+          <button class="ed-trash" data-action="del-step">🗑</button>
+        </li>`;
+      });
+      html += `</ul>
+        <button class="ed-add-btn" data-action="add-step">+ Paso de preparación</button>`;
+    }
+    html += `</section>`;
+  });
+  html += `<button class="ed-add-btn ed-add-meal" data-action="add-meal">+ Añadir comida en ${DAY_NAMES[day]}</button>`;
+
+  // Categorías: solo las visibles en el plan actual (las usadas)
+  const idsSeen = new Set();
+  for(const dd of Object.values(local.editor.draft)){
+    for(const m of (dd?.meals||[])){
+      for(const it of (m.items||[])){
+        if(it.n) idsSeen.add(slug(it.n));
+      }
+    }
+  }
+  if(idsSeen.size > 0){
+    html += `<section class="ed-meal">
+      <div class="ed-section-title">Categorías de ingredientes</div>
+      <p class="ajustes-help" style="padding:0 0 8px">Asigna una categoría a cada ingrediente para que aparezca agrupado en Compra y Despensa.</p>`;
+    const sortedIds = [...idsSeen].sort((a, b) => {
+      const an = nameForId(a, local.editor.draft);
+      const bn = nameForId(b, local.editor.draft);
+      return an.localeCompare(bn);
+    });
+    for(const id of sortedIds){
+      const name = nameForId(id, local.editor.draft);
+      const cur = local.editor.cats[id] || categoryFor(name);
+      const opts = CATEGORIES.map(c => `<option value="${c}" ${c===cur?'selected':''}>${c}</option>`).join('');
+      html += `<div class="ed-cat-row" data-id="${id}">
+        <span class="ed-cat-name">${escText(name)}</span>
+        <select data-action="set-cat">${opts}</select>
+      </div>`;
+    }
+    html += `</section>`;
+  }
+
+  $edMain.innerHTML = html;
+  wireEditorEvents();
+}
+
+function nameForId(id, plan){
+  for(const dd of Object.values(plan)){
+    for(const m of (dd?.meals||[])){
+      for(const it of (m.items||[])){
+        if(slug(it.n) === id) return it.n;
+      }
+    }
+  }
+  return id;
+}
+
+function escAttr(s){ return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function escText(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function wireEditorEvents(){
+  // Inputs que mutan draft sin re-renderizar (para no perder el foco).
+  $edMain.querySelectorAll('.ed-meal').forEach(sec => {
+    const mi = +sec.dataset.mi;
+    const meal = local.editor.draft[local.editor.day].meals[mi];
+
+    sec.querySelectorAll('.ed-meal-head input[data-field], .ed-meal-dish, .ed-free-msg').forEach(inp => {
+      inp.oninput = () => { meal[inp.dataset.field] = inp.value; markDirty(); };
+    });
+
+    // Toggle free
+    const toggleFree = sec.querySelector('[data-action="toggle-free"]');
+    if(toggleFree){
+      toggleFree.onchange = () => {
+        if(toggleFree.checked){
+          meal.free = meal.free || 'Comida libre';
+          delete meal.items; delete meal.prep; delete meal.dish;
+        } else {
+          delete meal.free;
+          meal.items = meal.items || [];
+          meal.prep = meal.prep || [];
+          meal.dish = meal.dish || '';
+        }
+        renderEditor();
+      };
+    }
+
+    // Items
+    sec.querySelectorAll('.ed-item').forEach(li => {
+      const ii = +li.dataset.ii;
+      const it = meal.items[ii];
+      li.querySelectorAll('[data-field]').forEach(inp => {
+        const field = inp.dataset.field;
+        const handler = () => {
+          let val = inp.value;
+          if(field === 'm' || field === 'c'){
+            val = parseFloat(val);
+            if(!Number.isFinite(val)) val = 0;
+          }
+          it[field] = val;
+          markDirty();
+        };
+        if(inp.tagName === 'SELECT') inp.onchange = handler;
+        else inp.oninput = handler;
+      });
+      li.querySelector('[data-action="del-item"]').onclick = () => {
+        meal.items.splice(ii, 1);
+        renderEditor();
+      };
+    });
+
+    // Prep
+    sec.querySelectorAll('.ed-prep-step').forEach(li => {
+      const si = +li.dataset.si;
+      const s = meal.prep[si];
+      li.querySelectorAll('[data-field]').forEach(inp => {
+        const handler = () => { s[inp.dataset.field] = inp.value; markDirty(); };
+        if(inp.tagName === 'SELECT') inp.onchange = handler;
+        else inp.oninput = handler;
+      });
+      li.querySelector('[data-action="del-step"]').onclick = () => {
+        meal.prep.splice(si, 1);
+        renderEditor();
+      };
+    });
+
+    sec.querySelector('[data-action="add-item"]')?.addEventListener('click', () => {
+      (meal.items = meal.items || []).push({ n: '', m: 0, c: 0, u: 'g' });
+      renderEditor();
+    });
+    sec.querySelector('[data-action="add-step"]')?.addEventListener('click', () => {
+      (meal.prep = meal.prep || []).push({ who: 'ambos', t: '' });
+      renderEditor();
+    });
+    sec.querySelector('[data-action="del-meal"]').onclick = () => {
+      if(!confirm('¿Eliminar esta comida?')) return;
+      local.editor.draft[local.editor.day].meals.splice(mi, 1);
+      renderEditor();
+    };
+  });
+
+  // Add meal
+  $edMain.querySelector('[data-action="add-meal"]')?.addEventListener('click', () => {
+    const dayPlan = local.editor.draft[local.editor.day] = local.editor.draft[local.editor.day] || { meals: [] };
+    dayPlan.meals.push({ slot: 'Comida', time: '', dish: '', items: [], prep: [] });
+    renderEditor();
+  });
+
+  // Categorías
+  $edMain.querySelectorAll('.ed-cat-row').forEach(row => {
+    const id = row.dataset.id;
+    row.querySelector('select').onchange = (e) => {
+      local.editor.cats[id] = e.target.value;
+      markDirty();
+    };
+  });
+}
+
+function markDirty(){
+  $edSave.classList.add('dirty');
+}
+
+async function savePlan(){
+  if(!isEditorDirty()){ closeEditor(); return; }
+  if(!confirm('Guardar el plan. Esto archivará el plan anterior y reiniciará "comidas hechas" y "planificación". ¿Continuar?')) return;
+  const draft = local.editor.draft;
+  const cats = local.editor.cats;
+  const archiveId = 'archive-' + new Date().toISOString().replace(/[:.]/g, '-');
+  const archiveRef = doc(db, 'plans', archiveId);
+  try{
+    await runTransaction(db, async (tx) => {
+      const cur = await tx.get(PLAN_DOC);
+      const planData = cur.exists() ? cur.data() : null;
+      if(planData){
+        tx.set(archiveRef, {
+          plan: planData.plan,
+          archivedAt: serverTimestamp(),
+          archivedBy: currentUid,
+        });
+      }
+      tx.set(PLAN_DOC, {
+        plan: draft,
+        updatedAt: serverTimestamp(),
+        updatedBy: currentUid,
+      });
+      tx.set(CAT_DOC, {
+        ingredients: cats,
+        updatedAt: serverTimestamp(),
+        updatedBy: currentUid,
+      });
+      tx.update(STATE_DOC, {
+        cooked: {}, skipped: {},
+        cycleStartedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(), updatedBy: currentUid,
+      });
+    });
+    autoCookDone = false; // permitir nuevo auto-cook con cycleStartedAt nuevo
+    local.editor = null;
+    $editor.hidden = true;
+    $appRoot.hidden = false;
+    render();
+  }catch(e){
+    console.error('savePlan', e);
+    alert('Error guardando el plan: ' + (e.code || e.message));
+  }
+}

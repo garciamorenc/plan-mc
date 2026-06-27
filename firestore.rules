@@ -1,9 +1,22 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /state/main {
-      allow read, write: if request.auth != null
+    function isAllowed() {
+      return request.auth != null
         && request.auth.uid in ['SWNOoQ2jESbAYndKSrjn8IashRy1', 'LebxC4ZYjdQJw81kTYamZcJLWIh1'];
+    }
+
+    match /state/main {
+      allow read, write: if isAllowed();
+    }
+    match /plan/current {
+      allow read, write: if isAllowed();
+    }
+    match /plans/{docId} {
+      allow read, write: if isAllowed();
+    }
+    match /categories/main {
+      allow read, write: if isAllowed();
     }
     match /{document=**} {
       allow read, write: if false;
