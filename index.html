@@ -20,17 +20,45 @@
     --card:#FFFFFF; --shadow:0 1px 2px rgba(42,38,34,.04), 0 6px 18px rgba(42,38,34,.06);
     --maria:#CC2E78; --maria-soft:#FBE6F0;
     --carlos:#2D62D4; --carlos-soft:#E4EBFB;
+    --ok:#2E8B57; --ok-soft:#E3F2EA;
+    --warn:#B5853E; --warn-soft:#F4ECDC;
     --display:'Fraunces',Georgia,serif;
     --body:'Inter',-apple-system,system-ui,sans-serif;
     --mono:'DM Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+    --tabbar-h: 64px;
   }
   *{box-sizing:border-box;margin:0;padding:0}
+  [hidden]{display:none!important}
   html{-webkit-text-size-adjust:100%}
   body{
     font-family:var(--body); background:var(--bg); color:var(--ink);
-    line-height:1.45; -webkit-font-smoothing:antialiased; padding-bottom:48px;
+    line-height:1.45; -webkit-font-smoothing:antialiased;
+    padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 12px);
   }
   .wrap{max-width:480px; margin:0 auto;}
+
+  /* Auth loading + gate */
+  #auth-loading{
+    min-height:100vh; display:flex; align-items:center; justify-content:center;
+  }
+  .spinner{
+    width:32px; height:32px; border-radius:50%;
+    border:3px solid var(--line); border-top-color:var(--ink);
+    animation:spin .8s linear infinite;
+  }
+  @keyframes spin{to{transform:rotate(360deg);}}
+  #auth-gate{
+    min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    padding:24px; gap:18px; text-align:center;
+  }
+  #auth-gate h1{font-family:var(--display); font-size:28px; font-weight:600;}
+  #auth-gate p{color:var(--muted); font-size:14px;}
+  #sign-in-btn{
+    background:var(--ink); color:#fff; border:0; padding:14px 22px; border-radius:12px;
+    font-weight:600; font-size:15px; cursor:pointer;
+  }
+  #sign-in-btn:active{transform:scale(.98);}
+  #gate-msg{color:var(--muted); font-size:13px; min-height:1.2em;}
 
   header{
     position:sticky; top:0; z-index:10; background:var(--bg);
@@ -47,6 +75,19 @@
     cursor:pointer; transition:all .15s ease; -webkit-tap-highlight-color:transparent;
   }
   .chip.active{background:var(--ink); color:#fff; border-color:var(--ink);}
+
+  .day-swap{display:flex; align-items:center; gap:8px; margin-top:10px; font-size:12px; color:var(--muted);}
+  .day-swap-lbl{font-weight:600; text-transform:uppercase; letter-spacing:.1em;}
+  .day-swap select{
+    flex:1; border:1px solid var(--line); background:var(--card); border-radius:9px;
+    padding:6px 8px; font-family:var(--body); font-size:13px; color:var(--ink); font-weight:600;
+  }
+  .day-swap.on select{border-color:var(--ink); color:var(--ink);}
+  .day-swap-reset{
+    flex:0 0 auto; border:1px solid var(--line); background:var(--card); color:var(--muted);
+    border-radius:9px; width:34px; height:32px; font-size:14px; cursor:pointer;
+    -webkit-tap-highlight-color:transparent;
+  }
 
   .controls{display:flex; align-items:center; gap:10px; margin-top:12px;}
   .seg{display:flex; background:#EFE9DF; border-radius:12px; padding:3px; flex:1;}
@@ -69,9 +110,34 @@
   .iconbtn.on{color:var(--ink); border-color:var(--ink); background:#fff;}
   .iconbtn:active{transform:scale(.94);}
 
+  .btn-week{
+    flex:1; background:var(--ink); color:#fff; border:0; padding:11px 14px; border-radius:11px;
+    font-weight:600; font-size:14px; cursor:pointer;
+  }
+  .btn-secondary{
+    flex:1; background:transparent; color:var(--muted); border:1px solid var(--line); padding:10px 14px;
+    border-radius:11px; font-weight:600; font-size:13px; cursor:pointer;
+  }
+
+  .add-row{gap:6px;}
+  .add-row input, .add-row select{
+    min-width:0; border:1px solid var(--line); background:var(--card); border-radius:11px;
+    padding:10px 12px; font-family:var(--body); font-size:14px; color:var(--ink);
+  }
+  .add-row #add-name{flex:1;}
+  .add-row #add-qty{flex:0 0 54px; padding:10px 8px; text-align:right; -moz-appearance:textfield; appearance:textfield;}
+  .add-row #add-qty::-webkit-outer-spin-button, .add-row #add-qty::-webkit-inner-spin-button{-webkit-appearance:none; margin:0;}
+  .add-row #add-unit{flex:0 0 56px; padding:10px 6px;}
+  .btn-add{
+    flex:0 0 auto; background:var(--ink); color:#fff; border:0; border-radius:11px;
+    width:42px; height:40px; font-size:20px; font-weight:600; cursor:pointer;
+  }
+
   main{padding:16px 14px 0;}
 
   .card{background:var(--card); border-radius:18px; box-shadow:var(--shadow); padding:15px 16px 6px; margin-bottom:14px; overflow:hidden;}
+  .card.cooked > :not(.meal-actions):not(.card-head){opacity:.55;}
+  .card.cooked .card-head .progress::after{content:' · hecha'; color:var(--ok);}
   .card-head{display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:2px;}
   .slot{font-size:11px; letter-spacing:.15em; text-transform:uppercase; color:var(--muted); font-weight:600;}
   .slot .time{color:var(--line); margin-left:7px; letter-spacing:.05em;}
@@ -80,12 +146,16 @@
   .dish{font-family:var(--display); font-weight:600; font-size:19px; line-height:1.15; margin:2px 0 10px; letter-spacing:-.01em;}
   .freemsg{font-size:13.5px; color:var(--muted); font-style:italic; padding:2px 2px 10px;}
 
+  .cat-title{font-size:11px; letter-spacing:.15em; text-transform:uppercase; color:var(--muted); font-weight:700; margin-bottom:6px; display:flex; align-items:center; gap:7px;}
+  .cat-ic{font-size:15px; letter-spacing:0;}
+
   .rows{list-style:none;}
   .row{display:flex; align-items:center; gap:12px; padding:9px 2px; border-top:1px solid #F1ECE3; cursor:pointer; -webkit-tap-highlight-color:transparent;}
   .row:first-child{border-top:0;}
   .box{flex:0 0 auto; width:22px; height:22px; border-radius:7px; border:2px solid var(--line); display:flex; align-items:center; justify-content:center; transition:all .15s ease;}
+  .box.big{width:28px; height:28px; border-radius:9px;}
   .box svg{width:13px; height:13px; opacity:0; transform:scale(.5); transition:all .15s ease;}
-  .name{flex:1; font-size:15px; font-weight:500; line-height:1.25;}
+  .name{flex:1; font-size:15px; font-weight:500; line-height:1.25; text-align:left;}
   .name .note{display:block; font-size:11.5px; font-weight:500; color:var(--muted); margin-top:1px;}
   .qty{flex:0 0 auto; text-align:right; display:flex; flex-direction:column; align-items:flex-end; gap:3px;}
   .total{font-family:var(--mono); font-size:15px; font-weight:500; letter-spacing:-.02em;}
@@ -115,278 +185,147 @@
   .who.carlos{background:var(--carlos-soft); color:var(--carlos);}
   .who.ambos{background:#EFE9DF; color:var(--muted);}
 
-  .foot{text-align:center; font-size:11.5px; color:var(--muted); padding:14px 24px 0; line-height:1.5;}
+  .meal-actions{padding:6px 0 12px; display:flex; gap:8px;}
+  .btn-done, .btn-undo{
+    flex:1; border:1px solid var(--line); background:var(--card); color:var(--ink);
+    border-radius:11px; padding:10px; font-weight:600; font-size:13px; cursor:pointer;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .btn-done{background:var(--ok-soft); color:var(--ok); border-color:var(--ok-soft);}
+  .btn-done:active{transform:scale(.98);}
+  .btn-undo{color:var(--muted);}
+
+  .pantry-row{cursor:default; height:52px; padding:0 2px 0 8px; border-left:3px solid transparent;}
+  .pantry-row.empty{border-left-color:var(--warn);}
+  .pantry-row.empty input.qval{color:var(--warn); border-color:var(--warn-soft);}
+  .pantry-ctrls{display:flex; align-items:center; gap:6px;}
+  .qbtn{
+    width:32px; height:32px; border-radius:9px; border:1px solid var(--line); background:var(--card);
+    font-size:18px; font-weight:600; color:var(--ink); cursor:pointer; -webkit-tap-highlight-color:transparent;
+  }
+  .qbtn:active{transform:scale(.94);}
+  .qbtn.trash{color:#B7472A; font-size:14px; margin-left:2px;}
+  input.qval{
+    font-family:var(--mono); font-size:15px; width:56px; text-align:right;
+    padding:6px 6px; border:1px solid var(--line); background:var(--card); border-radius:8px;
+    color:var(--ink); -moz-appearance:textfield; appearance:textfield;
+  }
+  input.qval::-webkit-outer-spin-button, input.qval::-webkit-inner-spin-button{
+    -webkit-appearance:none; margin:0;
+  }
+  input.qval:focus{outline:none; border-color:var(--ink);}
+  .qunit{font-family:var(--body); font-size:11px; color:var(--muted); min-width:14px;}
+
+  .ajustes-help{font-size:13px; color:var(--muted); line-height:1.45; padding:2px 2px 12px;}
+  .seg-ajustes{margin:0 0 12px;}
+  .meal-partial{font-size:11.5px; color:var(--muted); padding:6px 4px; font-style:italic;}
+  .plan-day{padding:12px 2px; border-top:1px solid #F1ECE3;}
+  .plan-day:first-of-type{border-top:0;}
+  .plan-day-name{display:block; font-family:var(--display); font-weight:600; font-size:17px; color:var(--ink); margin-bottom:8px;}
+  .plan-day-name small{font-family:var(--body); font-weight:500; color:var(--muted); font-size:11.5px; margin-left:4px;}
+
+  .plan-person-row{display:flex; align-items:center; gap:8px; margin-top:6px; flex-wrap:nowrap;}
+  .plan-person-lbl{
+    flex:0 0 auto; font-size:11px; font-weight:700; letter-spacing:.05em;
+    text-transform:uppercase; padding:5px 8px; border-radius:7px; min-width:52px; text-align:center;
+  }
+  .plan-person-row.m .plan-person-lbl{background:var(--maria-soft); color:var(--maria);}
+  .plan-person-row.c .plan-person-lbl{background:var(--carlos-soft); color:var(--carlos);}
+
+  .plan-meals{display:flex; flex-wrap:wrap; gap:6px; flex:1;}
+  .plan-meal{
+    border-radius:9px; padding:7px 11px; font-family:var(--body); font-size:12.5px; font-weight:600;
+    cursor:pointer; -webkit-tap-highlight-color:transparent; transition:all .15s ease;
+    min-width:48px; text-align:center; border:1px solid transparent;
+  }
+  .plan-meal.m{background:var(--maria); border-color:var(--maria); color:#fff;}
+  .plan-meal.m[aria-pressed="false"]{background:var(--card); color:var(--maria); border-color:var(--maria-soft); text-decoration:line-through;}
+  .plan-meal.c{background:var(--carlos); border-color:var(--carlos); color:#fff;}
+  .plan-meal.c[aria-pressed="false"]{background:var(--card); color:var(--carlos); border-color:var(--carlos-soft); text-decoration:line-through;}
+  .plan-meal.empty-portion{background:var(--card); color:var(--muted); border-color:var(--line); opacity:.45; pointer-events:none; text-decoration:none;}
+  .plan-meal:active{transform:scale(.96);}
+  .ajustes-actions{padding:6px 0 12px;}
+  .swap-row{justify-content:space-between;}
+  .swap-ctrls{display:flex; align-items:center; gap:8px; flex:0 0 auto;}
+  .swap-sel{
+    border:1px solid var(--line); background:var(--card); border-radius:9px;
+    padding:6px 8px; font-family:var(--body); font-size:13px; color:var(--ink); font-weight:600;
+    min-width:115px;
+  }
+  .swap-reset{font-size:14px;}
+  .signout-foot{text-align:center; padding:12px 0 18px;}
+  .signout-foot button{
+    background:transparent; border:0; color:var(--muted); font-family:var(--body);
+    font-size:12px; padding:6px 10px; cursor:pointer; text-decoration:underline;
+    text-underline-offset:3px; -webkit-tap-highlight-color:transparent;
+  }
+  .empty-state{text-align:center; padding:48px 24px; color:var(--ink); font-family:var(--display); font-size:20px;}
+  .empty-state small{display:block; margin-top:8px; font-family:var(--body); font-size:13px; color:var(--muted); font-weight:500;}
+  .loading{text-align:center; padding:48px 24px; color:var(--muted); font-size:14px;}
+
+  /* Bottom tab bar */
+  .tabbar{
+    position:fixed; left:0; right:0; bottom:0; z-index:20;
+    background:rgba(247,244,239,.92); backdrop-filter:saturate(1.5) blur(8px);
+    border-top:1px solid var(--line);
+    padding: 6px 12px calc(6px + env(safe-area-inset-bottom, 0px));
+    display:flex; justify-content:center; gap:6px;
+  }
+  .tabbar .inner{max-width:480px; width:100%; display:flex; gap:6px;}
+  .tabbar button{
+    flex:1; border:0; background:transparent; color:var(--muted);
+    font-family:var(--body); font-weight:600; font-size:12px; padding:8px 4px; border-radius:10px;
+    cursor:pointer; -webkit-tap-highlight-color:transparent;
+    display:flex; flex-direction:column; align-items:center; gap:3px;
+  }
+  .tabbar button .ic{width:22px; height:22px; display:block;}
+  .tabbar button[aria-pressed="true"]{color:var(--ink); background:var(--card); box-shadow:var(--shadow);}
+
   @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header>
-    <div class="eyebrow">Plan semanal · María &amp; Carlos</div>
-    <h1 class="dayname" id="dayname">Lunes</h1>
-    <div class="chips" id="chips"></div>
-    <div class="controls">
-      <div class="seg" role="group" aria-label="Vista">
-        <button class="v-conjunta" data-view="conjunta" aria-pressed="true">Conjunta</button>
-        <button class="v-maria" data-view="maria" aria-pressed="false">María</button>
-        <button class="v-carlos" data-view="carlos" aria-pressed="false">Carlos</button>
-      </div>
-      <button class="iconbtn" id="hideBtn" title="Ocultar lo que ya tengo" aria-pressed="false">👁</button>
-      <button class="iconbtn" id="resetBtn" title="Reiniciar el día">↺</button>
-    </div>
-  </header>
-  <main id="main"></main>
-  <div class="foot">Toca un ingrediente para marcar que ya lo tienes.<br>Las marcas se guardan en este móvil.</div>
+
+<div id="auth-loading" class="wrap">
+  <div class="spinner" aria-label="Cargando"></div>
 </div>
 
-<script>
-const CHK = '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>';
-const DAYS_ORDER = ['L','M','X','J','V','S','D'];
-const DAY_NAMES = {L:'Lunes',M:'Martes',X:'Miércoles',J:'Jueves',V:'Viernes',S:'Sábado',D:'Domingo'};
+<div id="auth-gate" class="wrap" hidden>
+  <h1>Plan · María &amp; Carlos</h1>
+  <p>Plan semanal, despensa y lista de la compra.</p>
+  <button id="sign-in-btn">Entrar con Google</button>
+  <div id="gate-msg"></div>
+</div>
 
-// m = gramos/ml de María · c = de Carlos · u = unidad (g por defecto) · note opcional
-const DATA = {
-  L:{meals:[
-    {slot:'Desayuno',time:'08:00',dish:'Yogur y fruta · Leche con cacao',
-     prep:[{who:'maria',t:'Mezcla el yogur griego con la chía, la crema de cacahuete, los arándanos y el kiwi.'},
-           {who:'carlos',t:'Calienta la leche y disuelve el cacao puro.'}],
-     items:[{n:'Creatina',m:5,c:5},{n:'Bebida de soja 0%',m:150,c:0,u:'ml'},{n:'Yogur griego 0%',m:125,c:0},
-       {n:'Chía',m:5,c:0},{n:'Crema de cacahuete',m:20,c:0},{n:'Arándanos',m:30,c:0},{n:'Kiwi',m:70,c:0},
-       {n:'Leche semidesnatada',m:0,c:250,u:'ml'},{n:'Cacao puro 0%',m:0,c:8}]},
-    {slot:'Media mañana',time:'',dish:'Tortitas y embutido',
-     items:[{n:'Tortitas de maíz',m:0,c:30},{n:'Lomo embuchado',m:0,c:60}]},
-    {slot:'Comida',time:'14:00',dish:'Plato libre',
-     items:[{n:'Verdura a elegir',m:200,c:200},{n:'Proteína no grasa',m:170,c:170},{n:'Carbohidrato a elegir',m:50,c:50},
-       {n:'Fruta',m:160,c:160,note:'Marcado «NO POSTRE» — confirmar si se toma'}]},
-    {slot:'Pre-entreno',time:'',dish:'',
-     items:[{n:'Plátano',m:160,c:160,note:'Solo si entrenáis'},{n:'Tortitas de maíz',m:15,c:0},{n:'Lomo embuchado',m:30,c:0}]},
-    {slot:'Cena',time:'21:00',dish:'Salmón con boniato y gazpacho',
-     items:[{n:'Gazpacho',m:200,c:200,u:'ml'},{n:'Aceite de oliva',m:5,c:5,u:'ml'},{n:'Boniato',m:180,c:180},
-       {n:'Salmón',m:170,c:200},{n:'Fresas',m:150,c:150},{n:'Yogur griego 0%',m:125,c:125}]},
-  ]},
-  M:{meals:[
-    {slot:'Desayuno',time:'08:00',dish:'Porridge de avena · Leche con cacao',
-     prep:[{who:'maria',t:'Mezcla los copos de avena con la leche desnatada y calienta 2-3 min. Corona con las fresas y la crema de cacahuete.'},
-           {who:'carlos',t:'Calienta la leche y disuelve el cacao puro.'}],
-     items:[{n:'Copos de avena',m:25,c:0},{n:'Leche desnatada',m:200,c:0,u:'ml'},{n:'Fresas',m:100,c:0},
-       {n:'Creatina',m:5,c:5},{n:'Bebida de soja 0%',m:150,c:0,u:'ml'},{n:'Crema de cacahuete',m:20,c:0},
-       {n:'Leche semidesnatada',m:0,c:250,u:'ml'},{n:'Cacao puro 0%',m:0,c:8}]},
-    {slot:'Media mañana',time:'',dish:'Anacardos y pavo',
-     items:[{n:'Anacardos',m:0,c:30},{n:'Pechuga de pavo 92%',m:0,c:50}]},
-    {slot:'Comida',time:'14:00',dish:'Poke bowl de pollo',
-     prep:[{who:'ambos',t:'Cuece el arroz y déjalo templar. Cocina el pollo troceado. Monta el bowl con el aguacate, el maíz, el edamame, el tomate cherry y el pepino; remata con las pipas.'}],
-     items:[{n:'Arroz',m:60,c:60},{n:'Pechuga de pollo',m:170,c:170},{n:'Aguacate',m:100,c:100},{n:'Maíz',m:30,c:30},
-       {n:'Edamame',m:50,c:50},{n:'Tomate cherry',m:100,c:100},{n:'Pepino',m:100,c:100},{n:'Pipas de calabaza',m:10,c:10}]},
-    {slot:'Pre-entreno',time:'',dish:'',
-     items:[{n:'Plátano',m:160,c:160,note:'Solo si entrenáis'},{n:'Yogur de proteínas',m:120,c:0},{n:'Chocolate negro 85%',m:8,c:0}]},
-    {slot:'Cena',time:'21:00',dish:'Ensalada de atún, mango y feta',
-     prep:[{who:'ambos',t:'Escurre el atún. Trocea el mango, el aguacate y el pepino. Mézclalo con la espinaca, el tomate cherry, el pepinillo y el feta.'},
-           {who:'carlos',t:'Añade las lentejas escurridas.'}],
-     items:[{n:'Atún claro al natural (Dia)',m:120,c:120},{n:'Mango',m:100,c:100},{n:'Queso feta',m:30,c:30},
-       {n:'Pepinillo en vinagre',m:50,c:50},{n:'Aguacate',m:50,c:50},{n:'Espinaca',m:30,c:30},
-       {n:'Tomate cherry',m:150,c:150},{n:'Pepino',m:100,c:100},{n:'Lentejas cocidas en bote',m:0,c:150}]},
-  ]},
-  X:{meals:[
-    {slot:'Desayuno',time:'08:00',dish:'Yogur y fruta · Leche con cacao',
-     prep:[{who:'maria',t:'Mezcla el yogur griego con la chía, la crema de cacahuete, los arándanos y el kiwi.'},
-           {who:'carlos',t:'Calienta la leche y disuelve el cacao puro.'}],
-     items:[{n:'Creatina',m:5,c:5},{n:'Bebida de soja 0%',m:150,c:0,u:'ml'},{n:'Yogur griego 0%',m:125,c:0},
-       {n:'Chía',m:5,c:0},{n:'Crema de cacahuete',m:20,c:0},{n:'Arándanos',m:30,c:0},{n:'Kiwi',m:70,c:0},
-       {n:'Leche semidesnatada',m:0,c:250,u:'ml'},{n:'Cacao puro 0%',m:0,c:8}]},
-    {slot:'Media mañana',time:'',dish:'Tortitas y embutido',
-     items:[{n:'Tortitas de maíz',m:0,c:30},{n:'Lomo embuchado',m:0,c:60}]},
-    {slot:'Comida',time:'14:00',dish:'Ensalada de edamame, garbanzos y pavo',
-     prep:[{who:'ambos',t:'Cocina la pechuga de pavo y trocéala. Mezcla la espinaca, el edamame, los garbanzos, el feta y el aguacate; añade el pavo y la manzana en dados.'}],
-     items:[{n:'Espinaca',m:30,c:30},{n:'Edamame',m:40,c:40},{n:'Garbanzos cocidos',m:150,c:150},{n:'Queso feta',m:20,c:20},{n:'Aguacate',m:50,c:50},
-       {n:'Pechuga de pavo',m:170,c:200},{n:'Manzana',m:90,c:90,note:'En vez de la granada'},{n:'Nueces',m:0,c:15}]},
-    {slot:'Pre-entreno',time:'',dish:'',
-     items:[{n:'Plátano',m:160,c:160,note:'Solo si entrenáis'},{n:'Tortitas de maíz',m:15,c:0},
-       {n:'Lomo embuchado',m:30,c:0},{n:'Mandarina',m:70,c:0}]},
-    {slot:'Cena',time:'21:00',dish:'Revuelto de setas con huevo y atún',
-     prep:[{who:'ambos',t:'Saltea las setas, el champiñón y el calabacín con el aceite; cuaja el huevo. Acompaña con el atún escurrido y las patatas. De postre, fresas.'}],
-     items:[{n:'Setas',m:50,c:50},{n:'Champiñón',m:50,c:50},{n:'Calabacín',m:100,c:100},{n:'Aceite de oliva',m:9,c:9,u:'ml'},
-       {n:'Huevo',m:100,c:100},{n:'Atún claro al natural (Carrefour)',m:50,c:50},{n:'Patatas',m:160,c:160},{n:'Fresas',m:150,c:150}]},
-  ]},
-  J:{meals:[
-    {slot:'Desayuno',time:'08:00',dish:'Porridge de avena · Leche con cacao',
-     prep:[{who:'maria',t:'Mezcla los copos de avena con la leche desnatada y calienta 2-3 min. Corona con las fresas y la crema de cacahuete.'},
-           {who:'carlos',t:'Calienta la leche y disuelve el cacao puro.'}],
-     items:[{n:'Copos de avena',m:25,c:0},{n:'Leche desnatada',m:200,c:0,u:'ml'},{n:'Fresas',m:100,c:0},
-       {n:'Creatina',m:5,c:5},{n:'Bebida de soja 0%',m:150,c:0,u:'ml'},{n:'Crema de cacahuete',m:20,c:0},
-       {n:'Leche semidesnatada',m:0,c:250,u:'ml'},{n:'Cacao puro 0%',m:0,c:8}]},
-    {slot:'Media mañana',time:'',dish:'Anacardos y pavo',
-     items:[{n:'Anacardos',m:0,c:30},{n:'Pechuga de pavo 92%',m:0,c:50}]},
-    {slot:'Comida',time:'14:00',dish:'Ensalada de cherrys y burrata con pavo',
-     prep:[{who:'ambos',t:'Cocina la pechuga de pavo a la plancha y trocéala. Monta la ensalada con el tomate cherry, la burrata y la espinaca; aliña con el aceite.'},
-           {who:'carlos',t:'Acompaña con el arroz cocido.'}],
-     items:[{n:'Tomate cherry',m:150,c:150},{n:'Queso burrata',m:60,c:60},{n:'Espinaca',m:30,c:30},
-       {n:'Pechuga de pavo',m:150,c:200},{n:'Aceite de oliva',m:5,c:5,u:'ml'},{n:'Arroz',m:0,c:60}]},
-    {slot:'Pre-entreno',time:'',dish:'',
-     items:[{n:'Plátano',m:160,c:160,note:'Solo si entrenáis'},{n:'Yogur de proteínas',m:120,c:0},{n:'Chocolate negro 85%',m:8,c:0}]},
-    {slot:'Cena',time:'21:00',dish:'Tartar de salmón',
-     prep:[{who:'ambos',t:'Pica el salmón y la cebolla. Adereza con la salsa de soja, la mostaza, el limón y el orégano. Sirve con el aguacate. De postre, nísperos y yogur.'}],
-     items:[{n:'Salmón',m:170,c:170},{n:'Aguacate',m:60,c:60},{n:'Cebolla',m:30,c:30},{n:'Limón',m:20,c:20},
-       {n:'Salsa de soja',m:20,c:20,u:'ml'},{n:'Mostaza de Dijon',m:10,c:10},{n:'Orégano',m:3,c:3},
-       {n:'Nísperos',m:140,c:140},{n:'Yogur griego 0%',m:125,c:125}]},
-  ]},
-  V:{meals:[
-    {slot:'Desayuno',time:'08:00',dish:'Yogur y fruta · Leche con cacao',
-     prep:[{who:'maria',t:'Mezcla el yogur griego con la chía, la crema de cacahuete, los arándanos y el kiwi.'},
-           {who:'carlos',t:'Calienta la leche y disuelve el cacao puro.'}],
-     items:[{n:'Creatina',m:5,c:5},{n:'Bebida de soja 0%',m:150,c:0,u:'ml'},{n:'Yogur griego 0%',m:125,c:0},
-       {n:'Chía',m:5,c:0},{n:'Crema de cacahuete',m:20,c:0},{n:'Arándanos',m:30,c:0},{n:'Kiwi',m:70,c:0},
-       {n:'Leche semidesnatada',m:0,c:250,u:'ml'},{n:'Cacao puro 0%',m:0,c:8}]},
-    {slot:'Media mañana',time:'',dish:'Tortitas y embutido',
-     items:[{n:'Tortitas de maíz',m:15,c:30},{n:'Lomo embuchado',m:30,c:60}]},
-    {slot:'Comida',time:'14:00',dish:'Pita de pollo con salsa de yogur',
-     prep:[{who:'ambos',t:'Rellena el pan de pita con el pollo cocinado, la lechuga, la cebolla y el tomate. Aliña con la salsa de yogur (yogur y limón). Acompaña con las patatas; uvas de postre.'},
-           {who:'carlos',t:'Añade el aguacate y el queso en lonchas.'}],
-     items:[{n:'Pan de pita',m:134,c:134},{n:'Contramuslo de pollo',m:150,c:150},{n:'Lechuga',m:30,c:30},
-       {n:'Cebolla',m:30,c:30},{n:'Tomate',m:50,c:50},{n:'Yogur griego 0%',m:125,c:125},{n:'Limón',m:50,c:50},
-       {n:'Aguacate',m:0,c:60},{n:'Queso en lonchas light',m:0,c:25},{n:'Patatas',m:160,c:160},{n:'Uvas',m:150,c:150}]},
-    {slot:'Cena',time:'21:00',dish:'Pizza casera',
-     prep:[{who:'ambos',t:'Cubre la base con el tomate triturado, la mozzarella, el jamón cocido, la cebolla y el champiñón. Hornea hasta que funda. Uvas de postre.'}],
-     items:[{n:'Base de pizza',m:140,c:140},{n:'Tomate triturado',m:100,c:100,u:'ml'},{n:'Queso mozzarella',m:100,c:120},
-       {n:'Jamón cocido',m:60,c:60},{n:'Cebolla',m:30,c:30},{n:'Champiñón',m:30,c:30},{n:'Uvas',m:200,c:200}]},
-  ]},
-  S:{meals:[
-    {slot:'Desayuno',time:'09:00',dish:'Tortitas de avena con sirope',
-     prep:[{who:'ambos',t:'Bate los copos con el huevo y la leche; haz las tortitas en la sartén. Derrite el chocolate con la leche semi para el sirope. Acompaña con arándanos.'}],
-     items:[{n:'Copos de avena',m:50,c:50},{n:'Huevo',m:50,c:50},{n:'Leche desnatada',m:100,c:100,u:'ml'},
-       {n:'Chocolate negro 85%',m:16,c:16},{n:'Leche semidesnatada',m:10,c:260,u:'ml'},{n:'Arándanos',m:50,c:50},
-       {n:'Bebida de soja 0%',m:150,c:0,u:'ml'},{n:'Cacao puro 0%',m:0,c:8}]},
-    {slot:'Comida',time:'14:00',dish:'Hamburguesa de ternera',
-     prep:[{who:'ambos',t:'Mezcla la carne con el ajo y el perejil; forma la hamburguesa y hazla a la plancha. Monta con el pan, el huevo a la plancha y el queso.'}],
-     items:[{n:'Filete de ternera',m:175,c:175},{n:'Ajo',m:5,c:5},{n:'Perejil',m:5,c:5},
-       {n:'Pan de hamburguesa',m:75,c:75,note:'De panadería'},{n:'Huevo',m:50,c:50},{n:'Queso en lonchas light',m:25,c:0}]},
-    {slot:'Cena',time:'',free:'Sin cena pautada en el plan.'},
-  ]},
-  D:{meals:[
-    {slot:'Desayuno',time:'09:00',dish:'Tostada de pan integral con jamón y huevo',
-     prep:[{who:'ambos',t:'Tuesta el pan integral. Acompaña con el jamón curado, el huevo y el tomate; un hilo de aceite.'},
-           {who:'carlos',t:'Con leche y cacao.'}],
-     items:[{n:'Pan integral',m:60,c:60},{n:'Jamón curado/serrano',m:40,c:50},{n:'Huevo',m:50,c:50},
-       {n:'Tomate',m:70,c:70},{n:'Aceite de oliva',m:5,c:5,u:'ml'},{n:'Bebida de soja 0%',m:150,c:0,u:'ml'},
-       {n:'Leche semidesnatada',m:0,c:250,u:'ml'},{n:'Cacao puro 0%',m:0,c:8}]},
-    {slot:'Comida',time:'14:00',dish:'Ensalada de sardinas y cottage',
-     prep:[{who:'ambos',t:'Mezcla las sardinas con el cottage, los pimientos, el tomate y el maíz. Añade las nueces. Acompaña con las patatas.'}],
-     items:[{n:'Sardina',m:90,c:90},{n:'Queso cottage',m:100,c:100},{n:'Pimiento rojo',m:50,c:50},
-       {n:'Tomate',m:70,c:70},{n:'Pimiento verde',m:50,c:50},{n:'Maíz',m:30,c:30},{n:'Patatas',m:250,c:250},{n:'Nueces',m:20,c:20}]},
-    {slot:'Cena',time:'20:00',dish:'Ensalada crunchy de pasta de lentejas',
-     prep:[{who:'ambos',t:'Cuece la pasta de lentejas. Mézclala con el pollo cocinado, el huevo, el tomate cherry y las pipas; aliña con el aceite y la mostaza.'}],
-     items:[{n:'Pasta de lentejas',m:50,c:50},{n:'Pechuga de pollo',m:130,c:130},{n:'Huevo',m:50,c:50},
-       {n:'Pipas de calabaza',m:10,c:10},{n:'Tomate cherry',m:100,c:100},{n:'Aceite de oliva',m:5,c:5,u:'ml'},{n:'Mostaza de Dijon',m:5,c:5}]},
-  ]},
-};
+<div id="app" hidden>
+  <div class="wrap">
+    <header id="header"></header>
+    <main id="main"></main>
+  </div>
+  <nav class="tabbar" id="tabbar" role="tablist" aria-label="Secciones">
+    <div class="inner">
+      <button data-tab="comidas" aria-pressed="true">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 21h10"/><path d="M12 21a9 9 0 0 0 9-9H3a9 9 0 0 0 9 9Z"/><path d="M11.38 12a2.4 2.4 0 0 1-.4-4.77 2.4 2.4 0 0 1 3.2-2.77 2.4 2.4 0 0 1 3.47-.63 2.4 2.4 0 0 1 3.37 3.37 2.4 2.4 0 0 1-1.1 3.7 2.51 2.51 0 0 1 .03 1.1"/><path d="m13 12 4-4"/><path d="M10.9 7.25A3.99 3.99 0 0 0 4 10c0 .73.2 1.41.54 2"/></svg>
+        Comidas
+      </button>
+      <button data-tab="lista" aria-pressed="false">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></svg>
+        Compra
+      </button>
+      <button data-tab="despensa" aria-pressed="false">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 6a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6Z"/><path d="M5 10h14"/><path d="M15 7v6"/></svg>
+        Despensa
+      </button>
+      <button data-tab="ajustes" aria-pressed="false">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></svg>
+        Ajustes
+      </button>
+    </div>
+  </nav>
+  <button id="sign-out-btn" hidden></button>
+</div>
 
-const STORE='plan_mc_v1';
-const state={day:'L',view:'conjunta',hideHave:false,checked:new Set(),prep:new Set()};
-
-(function(){
-  const map=['D','L','M','X','J','V','S'];
-  state.day=map[new Date().getDay()]||'L';
-  try{
-    const s=JSON.parse(localStorage.getItem(STORE)||'{}');
-    if(Array.isArray(s.checked)) state.checked=new Set(s.checked);
-  }catch(e){}
-})();
-function save(){
-  try{ localStorage.setItem(STORE, JSON.stringify({checked:[...state.checked]})); }catch(e){}
-}
-
-const $main=document.getElementById('main');
-const $chips=document.getElementById('chips');
-const $dayname=document.getElementById('dayname');
-
-function buildChips(){
-  $chips.innerHTML='';
-  DAYS_ORDER.forEach(d=>{
-    const b=document.createElement('button');
-    b.className='chip'+(d===state.day?' active':'');
-    b.textContent=d; b.setAttribute('aria-label',DAY_NAMES[d]);
-    b.onclick=()=>{ state.day=d; state.prep.clear(); save(); render(); };
-    $chips.appendChild(b);
-  });
-}
-function visibleItems(meal){
-  return (meal.items||[]).filter(it=>{
-    if(state.view==='maria') return (it.m||0)>0;
-    if(state.view==='carlos') return (it.c||0)>0;
-    return true;
-  });
-}
-const key=(mi,ii)=>state.day+'.'+mi+'.'+ii;
-
-function qtyHTML(it){
-  const m=it.m||0,c=it.c||0,u=it.u||'g';
-  if(state.view==='maria') return `<span class="solo m">${m}<span class="u">${u}</span></span>`;
-  if(state.view==='carlos') return `<span class="solo c">${c}<span class="u">${u}</span></span>`;
-  if(m>0&&c>0) return `<span class="total">${m+c}<span class="u">${u}</span></span><span class="split"><span class="pill m">M ${m}</span><span class="pill c">C ${c}</span></span>`;
-  if(m>0) return `<span class="solo m">${m}<span class="u">${u}</span></span>`;
-  return `<span class="solo c">${c}<span class="u">${u}</span></span>`;
-}
-
-function render(){
-  buildChips();
-  $dayname.textContent=DAY_NAMES[state.day];
-  document.querySelectorAll('.seg button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.view===state.view));
-  const hb=document.getElementById('hideBtn'); hb.classList.toggle('on',state.hideHave); hb.setAttribute('aria-pressed',state.hideHave);
-
-  const day=DATA[state.day];
-  let html='';
-  day.meals.forEach((meal,mi)=>{
-    if(meal.free){
-      html+=`<section class="card"><div class="card-head"><div class="slot">${meal.slot}${meal.time?`<span class="time">${meal.time}</span>`:''}</div></div><div class="freemsg">${meal.free}</div></section>`;
-      return;
-    }
-    const items=visibleItems(meal);
-    if(items.length===0) return;
-    const total=items.length;
-    const done=items.filter(it=>state.checked.has(key(mi,meal.items.indexOf(it)))).length;
-    const shown=state.hideHave?items.filter(it=>!state.checked.has(key(mi,meal.items.indexOf(it)))):items;
-
-    html+=`<section class="card"><div class="card-head">
-      <div class="slot">${meal.slot}${meal.time?`<span class="time">${meal.time}</span>`:''}</div>
-      <div class="progress${done===total&&total>0?' done':''}">${done}/${total} listo${total!==1?'s':''}</div></div>`;
-    if(meal.dish) html+=`<div class="dish">${meal.dish}</div>`;
-    html+=`<ul class="rows">`;
-    shown.forEach(it=>{
-      const ii=meal.items.indexOf(it),k=key(mi,ii),ck=state.checked.has(k);
-      html+=`<li class="row${ck?' checked':''}" data-k="${k}"><span class="box">${CHK}</span>
-        <span class="name">${it.n}${it.note?`<span class="note">${it.note}</span>`:''}</span>
-        <span class="qty">${qtyHTML(it)}</span></li>`;
-    });
-    html+=`</ul>`;
-    if(meal.prep){
-      const steps=meal.prep.filter(s=>state.view==='conjunta'||s.who==='ambos'||s.who===state.view);
-      if(steps.length){
-        const pk='p'+mi,open=state.prep.has(pk);
-        html+=`<div class="prep"><button class="prep-btn" data-pk="${pk}" aria-expanded="${open}"><span class="arw">▸</span> Preparación</button><div class="prep-body${open?' open':''}">`;
-        steps.forEach(s=>{
-          const lab=s.who==='maria'?'<span class="who maria">María</span>':s.who==='carlos'?'<span class="who carlos">Carlos</span>':'<span class="who ambos">Ambos</span>';
-          html+=`<div class="step">${lab}<span>${s.t}</span></div>`;
-        });
-        html+=`</div></div>`;
-      }
-    }
-    html+=`</section>`;
-  });
-  $main.innerHTML=html;
-
-  $main.querySelectorAll('.row').forEach(r=>{
-    r.onclick=()=>{ const k=r.dataset.k; state.checked.has(k)?state.checked.delete(k):state.checked.add(k); save(); render(); };
-  });
-  $main.querySelectorAll('.prep-btn').forEach(b=>{
-    b.onclick=()=>{ const pk=b.dataset.pk; state.prep.has(pk)?state.prep.delete(pk):state.prep.add(pk); render(); };
-  });
-}
-
-document.querySelectorAll('.seg button').forEach(b=>{ b.onclick=()=>{ state.view=b.dataset.view; save(); render(); }; });
-document.getElementById('hideBtn').onclick=()=>{ state.hideHave=!state.hideHave; render(); };
-document.getElementById('resetBtn').onclick=()=>{ const pre=state.day+'.'; [...state.checked].forEach(k=>{ if(k.startsWith(pre)) state.checked.delete(k); }); save(); render(); };
-
-render();
-</script>
+<script type="module" src="./app.js"></script>
 <script>if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('./sw.js').catch(function(){});});}</script>
 </body>
 </html>
