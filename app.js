@@ -777,7 +777,7 @@ function renderComidas(){
         html += `<div class="prep"><button class="prep-btn" data-pk="${pk}" aria-expanded="${open}"><span class="arw">▸</span> Preparación</button><div class="prep-body${open?' open':''}">`;
         steps.forEach(s => {
           const lab = s.who==='maria'?'<span class="who maria">María</span>':s.who==='carlos'?'<span class="who carlos">Carlos</span>':'<span class="who ambos">Ambos</span>';
-          html += `<div class="step">${lab}<span>${s.t}</span></div>`;
+          html += `<div class="step">${lab}<span>${escText(s.t||'')}</span></div>`;
         });
         html += `</div></div>`;
       }
@@ -1179,12 +1179,17 @@ function renderEditor(){
   const dayPlan = local.editor.draft[day] || { meals: [] };
   if(!dayPlan.meals) dayPlan.meals = [];
   let html = '';
+  const totalMeals = dayPlan.meals.length;
   dayPlan.meals.forEach((meal, mi) => {
     const isFree = !!meal.free;
     html += `<section class="ed-meal" data-mi="${mi}">
       <div class="ed-meal-head">
         <input class="ed-meal-slot" data-field="slot" value="${escAttr(meal.slot||'')}" placeholder="Slot (Comida, Cena…)" />
         <input class="ed-meal-time" data-field="time" value="${escAttr(meal.time||'')}" placeholder="hh:mm" />
+        <div class="ed-moves">
+          <button class="ed-move up" data-action="move-meal-up" ${mi===0?'disabled':''} title="Subir">▴</button>
+          <button class="ed-move down" data-action="move-meal-down" ${mi===totalMeals-1?'disabled':''} title="Bajar">▾</button>
+        </div>
         <button class="ed-trash" data-action="del-meal" title="Eliminar comida">🗑</button>
       </div>
       ${isFree ? '' : `<input class="ed-meal-dish" data-field="dish" value="${escAttr(meal.dish||'')}" placeholder="Nombre del plato" />`}
@@ -1199,6 +1204,9 @@ function renderEditor(){
       html += `<div class="ed-section-title">Ingredientes</div><ul class="ed-items">`;
       const items = meal.items || [];
       items.forEach((it, ii) => {
+        const curId = slug(it.n || '');
+        const curCat = curId ? (local.editor.cats[curId] || categoryFor(it.n||'')) : '';
+        const catOpts = CATEGORIES.map(c => `<option value="${c}" ${c===curCat?'selected':''}>${c}</option>`).join('');
         html += `<li class="ed-item" data-ii="${ii}">
           <input class="ed-item-name" data-field="n" value="${escAttr(it.n||'')}" placeholder="Nombre del ingrediente" />
           <div class="ed-item-row">
@@ -1210,9 +1218,16 @@ function renderEditor(){
               <option value="g" ${(!it.u||it.u==='g')?'selected':''}>g</option>
               <option value="ml" ${it.u==='ml'?'selected':''}>ml</option>
             </select>
+            <div class="ed-moves">
+              <button class="ed-move up" data-action="move-item-up" ${ii===0?'disabled':''} title="Subir">▴</button>
+              <button class="ed-move down" data-action="move-item-down" ${ii===items.length-1?'disabled':''} title="Bajar">▾</button>
+            </div>
             <button class="ed-trash" data-action="del-item">🗑</button>
           </div>
-          <input class="ed-item-note" data-field="note" value="${escAttr(it.note||'')}" placeholder="Nota (opcional)" />
+          <div class="ed-item-extras">
+            <select class="ed-item-cat" ${curId?'':'disabled'} title="Categoría">${catOpts}</select>
+            <input class="ed-item-note" data-field="note" value="${escAttr(it.note||'')}" placeholder="Nota (opcional)" />
+          </div>
         </li>`;
       });
       html += `</ul>
@@ -1229,6 +1244,10 @@ function renderEditor(){
             <option value="carlos" ${s.who==='carlos'?'selected':''}>Carlos</option>
           </select>
           <textarea class="ed-step-text" data-field="t" placeholder="Paso de la preparación">${escText(s.t||'')}</textarea>
+          <div class="ed-moves">
+            <button class="ed-move up" data-action="move-step-up" ${si===0?'disabled':''} title="Subir">▴</button>
+            <button class="ed-move down" data-action="move-step-down" ${si===prep.length-1?'disabled':''} title="Bajar">▾</button>
+          </div>
           <button class="ed-trash" data-action="del-step">🗑</button>
         </li>`;
       });
@@ -1249,9 +1268,9 @@ function renderEditor(){
     }
   }
   if(idsSeen.size > 0){
-    html += `<section class="ed-meal">
+    html += `<section class="ed-card ed-cat-section">
       <div class="ed-section-title">Categorías de ingredientes</div>
-      <p class="ajustes-help" style="padding:0 0 8px">Asigna una categoría a cada ingrediente para que aparezca agrupado en Compra y Despensa.</p>`;
+      <p class="ajustes-help" style="padding:0 0 8px">Resumen de cada ingrediente con su categoría. También puedes cambiarla en línea junto a cada ingrediente.</p>`;
     const sortedIds = [...idsSeen].sort((a, b) => {
       const an = nameForId(a, local.editor.draft);
       const bn = nameForId(b, local.editor.draft);
@@ -1287,11 +1306,19 @@ function nameForId(id, plan){
 function escAttr(s){ return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function escText(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
+function moveAt(arr, i, dir){
+  const j = i + dir;
+  if(j < 0 || j >= arr.length) return false;
+  const t = arr[i]; arr[i] = arr[j]; arr[j] = t;
+  return true;
+}
+
 function wireEditorEvents(){
+  const meals = local.editor.draft[local.editor.day].meals;
   // Inputs que mutan draft sin re-renderizar (para no perder el foco).
   $edMain.querySelectorAll('.ed-meal').forEach(sec => {
     const mi = +sec.dataset.mi;
-    const meal = local.editor.draft[local.editor.day].meals[mi];
+    const meal = meals[mi];
 
     sec.querySelectorAll('.ed-meal-head input[data-field], .ed-meal-dish, .ed-free-msg').forEach(inp => {
       inp.oninput = () => { meal[inp.dataset.field] = inp.value; markDirty(); };
@@ -1332,6 +1359,16 @@ function wireEditorEvents(){
         if(inp.tagName === 'SELECT') inp.onchange = handler;
         else inp.oninput = handler;
       });
+      // Categoría inline: usa el nombre actual para derivar el id en el momento.
+      const catSel = li.querySelector('.ed-item-cat');
+      if(catSel){
+        catSel.onchange = (e) => {
+          const id = slug(it.n || '');
+          if(!id) return;
+          local.editor.cats[id] = e.target.value;
+          markDirty();
+        };
+      }
       li.querySelector('[data-action="del-item"]').onclick = () => {
         meal.items.splice(ii, 1);
         renderEditor();
@@ -1363,9 +1400,31 @@ function wireEditorEvents(){
     });
     sec.querySelector('[data-action="del-meal"]').onclick = () => {
       if(!confirm('¿Eliminar esta comida?')) return;
-      local.editor.draft[local.editor.day].meals.splice(mi, 1);
+      meals.splice(mi, 1);
       renderEditor();
     };
+
+    // Reordenar comida
+    sec.querySelector('[data-action="move-meal-up"]')?.addEventListener('click', () => {
+      if(moveAt(meals, mi, -1)){ markDirty(); renderEditor(); }
+    });
+    sec.querySelector('[data-action="move-meal-down"]')?.addEventListener('click', () => {
+      if(moveAt(meals, mi, +1)){ markDirty(); renderEditor(); }
+    });
+    // Reordenar ingredientes
+    sec.querySelectorAll('[data-action="move-item-up"]').forEach((b, ii) => {
+      b.onclick = () => { if(moveAt(meal.items, ii, -1)){ markDirty(); renderEditor(); } };
+    });
+    sec.querySelectorAll('[data-action="move-item-down"]').forEach((b, ii) => {
+      b.onclick = () => { if(moveAt(meal.items, ii, +1)){ markDirty(); renderEditor(); } };
+    });
+    // Reordenar pasos
+    sec.querySelectorAll('[data-action="move-step-up"]').forEach((b, si) => {
+      b.onclick = () => { if(moveAt(meal.prep, si, -1)){ markDirty(); renderEditor(); } };
+    });
+    sec.querySelectorAll('[data-action="move-step-down"]').forEach((b, si) => {
+      b.onclick = () => { if(moveAt(meal.prep, si, +1)){ markDirty(); renderEditor(); } };
+    });
   });
 
   // Add meal

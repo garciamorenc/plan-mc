@@ -180,6 +180,7 @@
   .prep-body{display:none; padding:4px 2px 10px;}
   .prep-body.open{display:block;}
   .step{display:flex; gap:9px; padding:5px 0; font-size:13.5px; color:#4a443d; line-height:1.4;}
+  .step span{white-space:pre-wrap;}
   .who{flex:0 0 auto; font-size:10px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; padding:2px 7px; border-radius:6px; height:fit-content; margin-top:1px;}
   .who.maria{background:var(--maria-soft); color:var(--maria);}
   .who.carlos{background:var(--carlos-soft); color:var(--carlos);}
@@ -338,10 +339,17 @@
   .ed-chips-row{display:flex; gap:7px;}
   #ed-main{padding:8px 14px 24px;}
 
-  .ed-meal{
+  .ed-meal, .ed-card{
     background:var(--card); border-radius:18px; box-shadow:var(--shadow);
     padding:14px 14px 10px; margin-bottom:14px;
   }
+  .ed-item-extras{display:flex; gap:6px; margin-top:6px;}
+  .ed-item-cat{
+    flex:0 0 auto; max-width:50%; border:1px solid var(--line); background:var(--card);
+    border-radius:8px; padding:5px 6px; font-family:var(--body); font-size:11.5px; color:var(--ink);
+  }
+  .ed-item-cat:disabled{opacity:.4; cursor:not-allowed;}
+  .ed-item-extras .ed-item-note{flex:1; min-width:0;}
   .ed-meal-head{display:flex; gap:8px; align-items:center; margin-bottom:8px;}
   .ed-meal-slot{flex:1; border:1px solid var(--line); background:var(--bg); border-radius:9px; padding:7px 10px;
     font-family:var(--body); font-weight:600; font-size:13.5px; color:var(--ink);}
@@ -352,6 +360,16 @@
     width:34px; height:34px; cursor:pointer; color:#B7472A; font-size:14px;
     -webkit-tap-highlight-color:transparent;
   }
+  .ed-moves{display:flex; flex-direction:column; flex:0 0 auto;}
+  .ed-move{
+    width:26px; height:17px; padding:0; border:1px solid var(--line); background:var(--card);
+    color:var(--ink); font-size:11px; line-height:1; cursor:pointer;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .ed-move.up{border-radius:7px 7px 0 0; border-bottom:0;}
+  .ed-move.down{border-radius:0 0 7px 7px;}
+  .ed-move:disabled{opacity:.25; cursor:default;}
+  .ed-move:not(:disabled):active{background:var(--bg);}
   .ed-meal-dish{
     width:100%; border:1px solid var(--line); background:var(--bg); border-radius:9px; padding:8px 10px;
     font-family:var(--display); font-weight:600; font-size:16px; color:var(--ink); margin-bottom:10px;
