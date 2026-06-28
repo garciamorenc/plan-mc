@@ -1,12 +1,8 @@
-// Cron por hora: lee state/plan/users en Firestore, decide qué notificaciones disparar
-// y las envía vía Firebase Cloud Messaging.
+// Notificación diaria: una vez al día, lista todas las comidas con ingredientes congelados
+// que ocurran en las próximas WINDOW_HOURS horas (default 48).
 //
-// Variables de entorno requeridas:
-//   FIREBASE_SERVICE_ACCOUNT_JSON   contenido completo del JSON de service account
-//
-// Decide el aviso "saca a descongelar X para mañana <comida>" usando el campo state.frozen[mealKey]
-// (objeto con ingredientes congelados por id). Se dispara cuando la hora del plato cae en una ventana
-// de (DEFROST_HOURS - 1, DEFROST_HOURS] desde ahora. Configurable con env DEFROST_HOURS (default 24).
+// Dedup: una notificación por usuario y por día (clave `defrost-digest:YYYY-MM-DD`).
+// La variable FORCE=true ignora el dedup (útil para pruebas manuales).
 
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
@@ -19,9 +15,10 @@ const fcm = getMessaging();
 
 const DAYS_ORDER = ['L','M','X','J','V','S','D'];
 const CODE_TO_JS = { D:0, L:1, M:2, X:3, J:4, V:5, S:6 };
+const WEEKDAY_MAP = ['D','L','M','X','J','V','S'];
 const DAY_NAMES = { L:'lunes', M:'martes', X:'miércoles', J:'jueves', V:'viernes', S:'sábado', D:'domingo' };
-const DEFROST_HOURS = parseInt(process.env.DEFROST_HOURS || '24', 10);
-const TZ = process.env.TIMEZONE || 'Europe/Madrid';
+const WINDOW_HOURS = parseFloat(process.env.WINDOW_HOURS || '48');
+const FORCE = (process.env.FORCE || '').toLowerCase() === 'true';
 
 const stripAccents = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '');
 function slug(s){
@@ -31,38 +28,42 @@ function slug(s){
     .replace(/^-+|-+$/g, '');
 }
 
-// Devuelve la fecha JS para un weekday (L,M,...) dada una fecha de inicio de ciclo (objeto Date) y la hora "hh:mm".
-// Asume ciclo de 7 días. Si la diferencia es ≥7 días, considera la semana actual (fecha más cercana).
+// Fecha aproximada del meal para un viewDay y un time "hh:mm".
+// Trabajamos con el reloj del runner (UTC). Las diferencias en horas dentro de una ventana de 48 h
+// no varían materialmente por offset de TZ.
 function dateForMeal(dayCode, time, cycleStart, now){
   const targetWk = CODE_TO_JS[dayCode];
   if(targetWk == null) return null;
-  // Calcular la fecha base del ciclo en zona Madrid (aproximamos con offset local del runner).
-  // Para evitar fallos por TZ del runner, trabajamos con UTC y aplicamos el offset de Madrid.
-  // Suficientemente simple: usar tiempo local del runner (UTC en Actions). Convertir a Madrid restando offset.
-  // Atajo: el cron corre cada hora, y la diferencia se compara en ms, así que con UTC es ok.
   const start = new Date(cycleStart);
   start.setHours(0, 0, 0, 0);
   const daysSinceStart = Math.floor((now - start) / 86400000);
-  // Si el ciclo lleva más de 7 días, asumimos esta semana (próximo evento futuro del día).
   let base;
   if(daysSinceStart >= 7){
     base = new Date(now); base.setHours(0,0,0,0);
-    // ir al inicio de esta semana (lunes), aproximación: lunes más reciente
-    const dow = base.getDay(); // 0=Sun
+    const dow = base.getDay();
     const offsetToMonday = dow === 0 ? -6 : 1 - dow;
     base.setDate(base.getDate() + offsetToMonday);
   } else {
     base = start;
   }
-  // Encontrar la fecha del weekday objetivo dentro de esta ventana
   const baseWk = base.getDay();
   const offset = (targetWk - baseWk + 7) % 7;
   const date = new Date(base);
   date.setDate(date.getDate() + offset);
-  // Aplicar hora del plato
   const [hh, mm] = (time || '13:00').split(':').map(n => parseInt(n, 10) || 0);
   date.setHours(hh, mm, 0, 0);
   return date;
+}
+
+function relativeDayLabel(mealDate, now){
+  const a = new Date(mealDate); a.setHours(0,0,0,0);
+  const b = new Date(now); b.setHours(0,0,0,0);
+  const days = Math.round((a - b) / 86400000);
+  if(days <= 0) return 'hoy';
+  if(days === 1) return 'mañana';
+  if(days === 2) return 'pasado mañana';
+  const wk = WEEKDAY_MAP[a.getDay()];
+  return DAY_NAMES[wk] || '';
 }
 
 async function run(){
@@ -78,8 +79,7 @@ async function run(){
   const cycleStartedAt = state.cycleStartedAt?.toDate?.() || new Date();
   const now = new Date();
 
-  // Para cada viewDay del plan, resolver el sourceDay vía dayMap, sus meals y mealKey por slot del source.
-  const candidates = []; // { viewDay, srcDay, slot, dateMs, frozenIds, dish }
+  const candidates = [];
   for(const viewDay of DAYS_ORDER){
     const src = dayMap[viewDay] || viewDay;
     const meals = plan[src]?.meals || [];
@@ -90,7 +90,6 @@ async function run(){
       if(!fr) continue;
       const ids = fr === true ? meal.items.map(it => slug(it.n)) : Object.keys(fr).filter(k => fr[k]);
       if(ids.length === 0) continue;
-      // ¿Está ya cocinada por ambos? Saltar.
       const ck = cooked[mk];
       const cookedBoth = ck === true || (ck && ck.m && ck.c);
       if(cookedBoth) continue;
@@ -100,21 +99,38 @@ async function run(){
       const date = dateForMeal(viewDay, meal.time, cycleStartedAt, now);
       if(!date) continue;
       const hoursAhead = (date - now) / 3600000;
-      // Ventana: notificar cuando faltan entre (DEFROST_HOURS - 1) y DEFROST_HOURS horas.
-      if(hoursAhead > DEFROST_HOURS || hoursAhead <= DEFROST_HOURS - 1) continue;
+      if(hoursAhead < -1 || hoursAhead > WINDOW_HOURS) continue;
+      const names = meal.items.filter(it => ids.includes(slug(it.n))).map(it => it.n);
       candidates.push({
-        mealKey: mk,
         viewDay, srcDay: src, slot: meal.slot,
-        date, frozenIds: ids,
-        ingrNames: meal.items.filter(it => ids.includes(slug(it.n))).map(it => it.n),
+        date, hoursAhead,
+        ingrNames: names,
         dish: meal.dish || '',
       });
     }
   }
 
-  if(candidates.length === 0){ console.log('Sin candidatos en la ventana.'); return; }
+  if(candidates.length === 0){
+    console.log(`Sin comidas con ingredientes congelados en las próximas ${WINDOW_HOURS} h.`);
+    return;
+  }
 
-  // Cargar usuarios y sus tokens
+  candidates.sort((a, b) => a.date - b.date);
+
+  const lines = candidates.map(c => {
+    const when = `${relativeDayLabel(c.date, now)} ${c.slot.toLowerCase()}`;
+    return `${when}: ${c.ingrNames.join(', ')}`;
+  });
+  const body = lines.join(' · ');
+  const total = candidates.length;
+  const title = total === 1
+    ? 'Saca a descongelar para 1 comida'
+    : `Saca a descongelar para ${total} comidas`;
+
+  // Clave de dedup por día (UTC). 1 notificación por día por usuario.
+  const todayStr = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Madrid' }).format(now);
+  const notifKey = `defrost-digest:${todayStr}`;
+
   const usersSnap = await db.collection('users').get();
   let sent = 0;
   for(const userDoc of usersSnap.docs){
@@ -123,48 +139,43 @@ async function run(){
     if(tokens.length === 0) continue;
     if(u.notificationsMuted) continue;
     const last = u.lastNotifications || {};
-    for(const c of candidates){
-      const notifKey = `defrost:${c.date.toISOString().slice(0,10)}:${c.mealKey}`;
-      if(last[notifKey]) continue;
-      const list = c.ingrNames.join(', ');
-      const title = `Descongela para ${DAY_NAMES[c.viewDay]} (${c.slot})`;
-      const body = c.dish ? `${c.dish}: ${list}` : list;
-      try{
-        const resp = await fcm.sendEachForMulticast({
-          tokens,
-          notification: { title, body },
-          data: { url: '/', tag: notifKey },
-          webpush: {
-            fcmOptions: { link: '/' },
-            notification: { icon: '/icon-192.png' },
-          },
-        });
-        // Limpiar tokens muertos
-        const toRemove = [];
-        resp.responses.forEach((r, i) => {
-          if(!r.success){
-            const code = r.error?.code || '';
-            if(code.includes('registration-token-not-registered') || code.includes('invalid-argument')){
-              toRemove.push(tokens[i]);
-            }
+    if(!FORCE && last[notifKey]){
+      console.log(`Usuario ${userDoc.id}: ya notificado hoy. Saltado.`);
+      continue;
+    }
+    try{
+      const resp = await fcm.sendEachForMulticast({
+        tokens,
+        notification: { title, body },
+        data: { url: '/', tag: notifKey },
+        webpush: {
+          fcmOptions: { link: '/' },
+          notification: { icon: '/icon-192.png' },
+        },
+      });
+      const toRemove = [];
+      resp.responses.forEach((r, i) => {
+        if(!r.success){
+          const code = r.error?.code || '';
+          if(code.includes('registration-token-not-registered') || code.includes('invalid-argument')){
+            toRemove.push(tokens[i]);
           }
-        });
-        if(toRemove.length){
-          const updates = {};
-          for(const t of toRemove) updates[`fcmTokens.${t}`] = FieldValue.delete();
-          await userDoc.ref.update(updates);
         }
-        sent += resp.successCount;
-        // Marcar enviado
-        await userDoc.ref.set({
-          lastNotifications: { [notifKey]: FieldValue.serverTimestamp() }
-        }, { merge: true });
-      }catch(e){
-        console.error('FCM send error:', e?.message || e);
+      });
+      if(toRemove.length){
+        const updates = {};
+        for(const t of toRemove) updates[`fcmTokens.${t}`] = FieldValue.delete();
+        await userDoc.ref.update(updates);
       }
+      sent += resp.successCount;
+      await userDoc.ref.set({
+        lastNotifications: { [notifKey]: FieldValue.serverTimestamp() }
+      }, { merge: true });
+    }catch(e){
+      console.error('FCM send error:', e?.message || e);
     }
   }
-  console.log(`Push enviados: ${sent}. Candidatos: ${candidates.length}.`);
+  console.log(`Push enviados: ${sent}. Candidatos: ${total}. Body: "${body}"`);
 }
 
 run().then(() => process.exit(0)).catch(e => { console.error(e); process.exit(1); });

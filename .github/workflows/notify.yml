@@ -1,15 +1,20 @@
-name: Notify defrost reminders
+name: Defrost daily digest
 
 on:
   schedule:
-    # Cada hora en el minuto 5 (margen para que el snapshot esté quieto).
-    - cron: '5 * * * *'
+    # 07:00 UTC = 09:00 Madrid en verano (CEST), 08:00 en invierno (CET).
+    # Una sola ejecución al día.
+    - cron: '0 7 * * *'
   workflow_dispatch:
     inputs:
-      defrost_hours:
-        description: 'Antelación en horas (24 = aviso 24 h antes). Para probar tonight pon un valor que case con tu caso.'
+      window_hours:
+        description: 'Ventana en horas hacia adelante (default 48).'
         required: false
-        default: '24'
+        default: '48'
+      force:
+        description: 'true para reenviar aunque ya se haya notificado hoy.'
+        required: false
+        default: 'false'
 
 jobs:
   run:
@@ -24,5 +29,6 @@ jobs:
       - name: Run notifier
         env:
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
-          DEFROST_HOURS: ${{ github.event.inputs.defrost_hours || '24' }}
+          WINDOW_HOURS: ${{ github.event.inputs.window_hours || '48' }}
+          FORCE: ${{ github.event.inputs.force || 'false' }}
         run: node scripts/notify.mjs
