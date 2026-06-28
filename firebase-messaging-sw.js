@@ -12,19 +12,11 @@ firebase.initializeApp({
   appId: "1:747664642276:web:760d8133e74923d84cdcf1"
 });
 
-const messaging = firebase.messaging();
-
-messaging.onBackgroundMessage(({ notification, data }) => {
-  const title = notification?.title || 'Plan María & Carlos';
-  const body = notification?.body || '';
-  self.registration.showNotification(title, {
-    body,
-    icon: '/icon-192.png',
-    badge: '/icon-192.png',
-    tag: data?.tag || 'plan-mc-notification',
-    data: data || {},
-  });
-});
+// Inicializamos messaging para que Firebase reciba pushes en este SW. El navegador
+// muestra la notificación automáticamente cuando el payload incluye `notification`.
+// NO añadimos onBackgroundMessage: si lo hacemos, Chrome muestra la notificación dos veces
+// (una automática + otra manual desde el handler).
+firebase.messaging();
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();

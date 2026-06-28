@@ -258,8 +258,9 @@ async function registerToken(){
   if(!VAPID_KEY || VAPID_KEY.startsWith('TODO')) return;
   try{
     if(!messagingInstance) messagingInstance = getMessaging(app);
-    const reg = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
-    const token = await getToken(messagingInstance, { vapidKey: VAPID_KEY, serviceWorkerRegistration: reg });
+    // Firebase auto-registra firebase-messaging-sw.js en su propio scope
+    // (/firebase-cloud-messaging-push-scope). Así NO pisa el sw.js principal.
+    const token = await getToken(messagingInstance, { vapidKey: VAPID_KEY });
     if(!token) return;
     currentToken = token;
     // Mensajes en primer plano: el SW no muestra notificación; los pasamos por consola por ahora.

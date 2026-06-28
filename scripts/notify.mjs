@@ -150,7 +150,10 @@ async function run(){
         data: { url: '/', tag: notifKey },
         webpush: {
           fcmOptions: { link: '/' },
-          notification: { icon: '/icon-192.png' },
+          notification: {
+            icon: '/icon-192.png',
+            tag: notifKey,
+          },
         },
       });
       const toRemove = [];
