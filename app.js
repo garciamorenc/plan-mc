@@ -4,7 +4,8 @@ import {
   onAuthStateChanged, signOut
 } from 'https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js';
 import {
-  getFirestore, doc, onSnapshot, runTransaction, updateDoc, setDoc,
+  getFirestore, doc, onSnapshot, runTransaction, updateDoc, setDoc, deleteDoc,
+  collection, query, orderBy, limit,
   increment, serverTimestamp, enableIndexedDbPersistence, deleteField
 } from 'https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js';
 
@@ -37,7 +38,9 @@ const local = {
 };
 const cloud = {
   pantry: {}, cooked: {}, skipped: {}, dayMap: {}, cycleStartedAt: null,
-  plan: null, categories: {},
+  plan: null, planName: 'Plan inicial', planUpdatedAt: null,
+  categories: {},
+  archives: null,
   ready: false, planReady: false, catReady: false,
 };
 let currentUid = null;
@@ -178,6 +181,7 @@ function subscribeState(){
       try{
         await setDoc(PLAN_DOC, {
           plan: SEED_PLAN,
+          name: 'Plan inicial',
           updatedAt: serverTimestamp(),
           updatedBy: currentUid,
         });
@@ -186,11 +190,25 @@ function subscribeState(){
     }
     const d = snap.data() || {};
     cloud.plan = d.plan || SEED_PLAN;
+    cloud.planName = d.name || 'Sin nombre';
+    cloud.planUpdatedAt = d.updatedAt || null;
     cloud.planReady = true;
     rebuildCatalog(cloud.plan, cloud.categories);
     render();
     maybeBootAutoCook();
   }, (err) => console.error('plan snapshot', err));
+
+  // plans/ archivos del histórico, ordenados por fecha descendente.
+  const archivesQuery = query(collection(db, 'plans'), orderBy('archivedAt', 'desc'), limit(50));
+  onSnapshot(archivesQuery, (snap) => {
+    cloud.archives = snap.docs.map(d => ({
+      id: d.id,
+      archivedAt: d.data().archivedAt || null,
+      name: d.data().name || 'Sin nombre',
+      plan: d.data().plan || null,
+    }));
+    render();
+  }, (err) => console.error('archives snapshot', err));
 
   // categories/main: id ingrediente → categoría (editable cuando añades ingredientes nuevos).
   onSnapshot(CAT_DOC, async (snap) => {
@@ -424,6 +442,46 @@ async function undoCooked(day, slot, viewDay, persons){
 // Toggle proactivo desde planificación.
 // Si alguna persona del scope NO está skipped → marcamos a todas skipped (y si estaban cocinadas, devolvemos despensa).
 // Si todas están skipped → desactivamos skip para todas.
+// Activa o desactiva todas las comidas de un día (ambas personas), en una sola transacción.
+// Si makeSkipped=true: marca todo como skipped y deshace cualquier cocinada (devolviendo despensa).
+// Si makeSkipped=false: limpia todo el skip del día.
+async function toggleDay(srcDay, makeSkipped){
+  const meals = (cloud.plan?.[srcDay]?.meals || []).filter(m => !m.free && m.items);
+  if(meals.length === 0) return;
+  try{
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(STATE_DOC);
+      const d = snap.data() || {};
+      let pantry = { ...(d.pantry||{}) };
+      let cooked = d.cooked || {};
+      let skipped = d.skipped || {};
+      for(const meal of meals){
+        const k = mealKey(srcDay, meal.slot);
+        if(makeSkipped){
+          const cookedPersons = ['m','c'].filter(p => isOn(cooked, k, p));
+          if(cookedPersons.length > 0){
+            for(const p of cookedPersons){
+              const recorded = getDeducted(cooked, k, p);
+              const restore = recorded || mealConsumption(srcDay, meal.slot, [p]);
+              for(const id of Object.keys(restore)){
+                pantry[id] = (pantry[id]||0) + restore[id];
+              }
+            }
+            cooked = unsetCookedPersons(cooked, k, cookedPersons);
+          }
+          skipped = setPersons(skipped, k, ['m','c'], true);
+        } else {
+          skipped = setPersons(skipped, k, ['m','c'], false);
+        }
+      }
+      tx.update(STATE_DOC, {
+        pantry, cooked, skipped,
+        updatedAt: serverTimestamp(), updatedBy: currentUid
+      });
+    });
+  }catch(e){ console.error('toggleDay', e); }
+}
+
 async function toggleSkipped(srcDay, slot, persons){
   const k = mealKey(srcDay, slot);
   try{
@@ -885,7 +943,25 @@ function renderAjustes(){
     const src = sourceDay(d);
     const meals = (cloud.plan?.[src]?.meals || []).filter(m => !m.free && m.items);
     if(meals.length === 0) continue;
-    html += `<div class="plan-day"><span class="plan-day-name">${DAY_NAMES[d]}${src!==d?` <small>(de ${DAY_NAMES[src]})</small>`:''}</span>`;
+    // ¿Está todo el día (ambas personas, todas las comidas con porción) activo?
+    let allActive = true;
+    let anyToggleable = false;
+    for(const meal of meals){
+      const k = mealKey(src, meal.slot);
+      for(const person of ['m','c']){
+        const cons = mealConsumption(src, meal.slot, [person]);
+        if(Object.keys(cons).length === 0) continue;
+        anyToggleable = true;
+        if(isOn(cloud.skipped, k, person)) allActive = false;
+      }
+    }
+    const dayToggleAction = allActive ? 'skip' : 'unskip';
+    const dayToggleLbl = allActive ? `Desactivar el ${DAY_NAMES[d]} entero` : `Activar el ${DAY_NAMES[d]} entero`;
+    html += `<div class="plan-day">
+      <div class="plan-day-head">
+        <span class="plan-day-name">${DAY_NAMES[d]}${src!==d?` <small>(de ${DAY_NAMES[src]})</small>`:''}</span>
+        ${anyToggleable ? `<button class="plan-day-toggle" data-day="${src}" data-action="${dayToggleAction}" role="switch" aria-checked="${allActive}" aria-label="${dayToggleLbl}"></button>` : ''}
+      </div>`;
     for(const person of ['m','c']){
       const personName = person === 'm' ? 'María' : 'Carlos';
       html += `<div class="plan-person-row ${person}">
@@ -924,11 +1000,41 @@ function renderAjustes(){
   }
   html += `</ul></section>`;
 
-  html += `<section class="card cat-card"><div class="cat-title"><span class="cat-ic">✏️</span>Plan de comidas</div>
-    <p class="ajustes-help">Edita las recetas, ingredientes, cantidades y preparaciones. Al guardar se archiva el plan anterior y se reinicia la semana.</p>
-    <div class="ajustes-actions">
-      <button id="edit-plan-btn" class="btn-secondary">Abrir editor</button>
-    </div></section>`;
+  // Historial de planes (activo + archivos)
+  html += `<section class="card cat-card"><div class="cat-title"><span class="cat-ic">📜</span>Planes</div>
+    <p class="ajustes-help">El plan activo es el que se está usando ahora. Los demás son borradores guardados. Activa cualquiera para ponerlo en uso (el actual se archivará).</p>
+    <ul class="rows">`;
+  // Fila del plan activo
+  const activeDate = cloud.planUpdatedAt?.toDate ? cloud.planUpdatedAt.toDate().toLocaleString('es-ES', { dateStyle: 'medium', timeStyle: 'short' }) : '';
+  html += `<li class="row archive-row active-row">
+    <div class="archive-meta">
+      <span class="name">${escText(cloud.planName || 'Plan')} <span class="active-badge">ACTIVO</span></span>
+      ${activeDate ? `<span class="archive-date">${activeDate}</span>` : ''}
+    </div>
+    <div class="archive-ctrls">
+      <button class="ed-btn-sec edit-active">Editar</button>
+    </div>
+  </li>`;
+  if(cloud.archives == null){
+    html += `<li class="row" style="justify-content:center;"><span class="ajustes-help">Cargando archivos…</span></li>`;
+  } else {
+    for(const a of cloud.archives){
+      const date = a.archivedAt?.toDate ? a.archivedAt.toDate() : null;
+      const dateStr = date ? date.toLocaleString('es-ES', { dateStyle: 'medium', timeStyle: 'short' }) : '(sin fecha)';
+      html += `<li class="row archive-row">
+        <div class="archive-meta">
+          <span class="name">${escText(a.name)}</span>
+          <span class="archive-date">${dateStr}</span>
+        </div>
+        <div class="archive-ctrls">
+          <button class="ed-btn-sec archive-edit" data-id="${a.id}">Editar</button>
+          <button class="ed-btn-pri archive-restore" data-id="${a.id}">Activar</button>
+          <button class="qbtn trash archive-del" data-id="${a.id}" title="Eliminar archivo">🗑</button>
+        </div>
+      </li>`;
+    }
+  }
+  html += `</ul></section>`;
 
   html += `<section class="card cat-card"><div class="cat-title"><span class="cat-ic">🔄</span>Ciclo semanal</div>
     <p class="ajustes-help">Cada lunes el ciclo se reinicia automáticamente (cocinadas y desactivaciones de planificación se borran). Si necesitas forzar un reinicio mid-semana, púlsalo aquí.</p>
@@ -946,8 +1052,20 @@ function renderAjustes(){
   $main.querySelectorAll('.plan-meal').forEach(b => {
     b.onclick = () => toggleSkipped(b.dataset.day, b.dataset.slot, [b.dataset.person]);
   });
+  $main.querySelectorAll('.plan-day-toggle').forEach(b => {
+    b.onclick = () => toggleDay(b.dataset.day, b.dataset.action === 'skip');
+  });
   document.getElementById('new-week-btn-ajustes').onclick = startNewWeek;
-  document.getElementById('edit-plan-btn').onclick = openEditor;
+  $main.querySelector('.edit-active').onclick = () => openEditor();
+  $main.querySelectorAll('.archive-restore').forEach(b => {
+    b.onclick = () => restoreArchive(b.dataset.id);
+  });
+  $main.querySelectorAll('.archive-edit').forEach(b => {
+    b.onclick = () => editArchive(b.dataset.id);
+  });
+  $main.querySelectorAll('.archive-del').forEach(b => {
+    b.onclick = () => deleteArchive(b.dataset.id);
+  });
   $main.querySelectorAll('.swap-sel').forEach(sel => {
     sel.onchange = (e) => {
       const d = sel.dataset.day;
@@ -994,11 +1112,13 @@ const $edCancel = document.getElementById('ed-cancel');
 
 const deepCopy = (o) => JSON.parse(JSON.stringify(o));
 
-function openEditor(){
+function openEditor(planSource, sourceName){
   local.editor = {
     open: true,
-    draft: deepCopy(cloud.plan),
+    draft: deepCopy(planSource || cloud.plan),
     cats: deepCopy(cloud.categories || {}),
+    name: sourceName || cloud.planName || 'Sin nombre',
+    originalName: sourceName || cloud.planName || 'Sin nombre',
     day: local.day,
   };
   $appRoot.hidden = true;
@@ -1006,11 +1126,18 @@ function openEditor(){
   renderEditor();
 }
 
+function editArchive(archiveId){
+  const arc = (cloud.archives || []).find(a => a.id === archiveId);
+  if(!arc || !arc.plan){ alert('Archivo no encontrado o vacío'); return; }
+  openEditor(arc.plan, arc.name);
+}
+
 function isEditorDirty(){
   const e = local.editor;
   if(!e) return false;
   return JSON.stringify(e.draft) !== JSON.stringify(cloud.plan)
-      || JSON.stringify(e.cats) !== JSON.stringify(cloud.categories || {});
+      || JSON.stringify(e.cats) !== JSON.stringify(cloud.categories || {})
+      || (e.name || '') !== (e.originalName || '');
 }
 
 function closeEditor(){
@@ -1025,16 +1152,25 @@ $edCancel.onclick = closeEditor;
 $edSave.onclick = () => savePlan();
 
 function renderEditor(){
-  // Day chips
+  // Name input + day chips
   $edChips.innerHTML = '';
+  const nameInput = document.createElement('input');
+  nameInput.id = 'ed-name';
+  nameInput.placeholder = 'Nombre del plan';
+  nameInput.value = local.editor.name || '';
+  nameInput.oninput = () => { local.editor.name = nameInput.value; markDirty(); };
+  $edChips.appendChild(nameInput);
+  const chipsRow = document.createElement('div');
+  chipsRow.className = 'ed-chips-row';
   for(const d of DAYS_ORDER){
     const b = document.createElement('button');
     b.className = 'chip' + (d === local.editor.day ? ' active' : '');
     b.textContent = d;
     b.setAttribute('aria-label', DAY_NAMES[d]);
     b.onclick = () => { local.editor.day = d; renderEditor(); };
-    $edChips.appendChild(b);
+    chipsRow.appendChild(b);
   }
+  $edChips.appendChild(chipsRow);
 
   // Save button dirty state
   $edSave.classList.toggle('dirty', isEditorDirty());
@@ -1253,31 +1389,27 @@ function markDirty(){
   $edSave.classList.add('dirty');
 }
 
-async function savePlan(){
-  if(!isEditorDirty()){ closeEditor(); return; }
-  if(!confirm('Guardar el plan. Esto archivará el plan anterior y reiniciará "comidas hechas" y "planificación". ¿Continuar?')) return;
-  const draft = local.editor.draft;
-  const cats = local.editor.cats;
-  const archiveId = 'archive-' + new Date().toISOString().replace(/[:.]/g, '-');
-  const archiveRef = doc(db, 'plans', archiveId);
+async function restoreArchive(archiveId){
+  const arc = (cloud.archives || []).find(a => a.id === archiveId);
+  if(!arc || !arc.plan){ alert('Archivo no encontrado o vacío'); return; }
+  if(!confirm(`Activar "${arc.name}". El plan actual pasará al histórico y se reiniciará la semana (comidas hechas + planificación). ¿Continuar?`)) return;
+  const newArchiveId = 'archive-' + new Date().toISOString().replace(/[:.]/g, '-');
+  const newArchiveRef = doc(db, 'plans', newArchiveId);
   try{
     await runTransaction(db, async (tx) => {
       const cur = await tx.get(PLAN_DOC);
       const planData = cur.exists() ? cur.data() : null;
       if(planData){
-        tx.set(archiveRef, {
+        tx.set(newArchiveRef, {
           plan: planData.plan,
+          name: planData.name || 'Sin nombre',
           archivedAt: serverTimestamp(),
           archivedBy: currentUid,
         });
       }
       tx.set(PLAN_DOC, {
-        plan: draft,
-        updatedAt: serverTimestamp(),
-        updatedBy: currentUid,
-      });
-      tx.set(CAT_DOC, {
-        ingredients: cats,
+        plan: arc.plan,
+        name: arc.name,
         updatedAt: serverTimestamp(),
         updatedBy: currentUid,
       });
@@ -1287,11 +1419,51 @@ async function savePlan(){
         updatedAt: serverTimestamp(), updatedBy: currentUid,
       });
     });
-    autoCookDone = false; // permitir nuevo auto-cook con cycleStartedAt nuevo
+    autoCookDone = false;
+  }catch(e){
+    console.error('restoreArchive', e);
+    alert('Error restaurando: ' + (e.code || e.message));
+  }
+}
+
+async function deleteArchive(archiveId){
+  const arc = (cloud.archives || []).find(a => a.id === archiveId);
+  const dateStr = arc?.archivedAt?.toDate ? arc.archivedAt.toDate().toLocaleString('es-ES', { dateStyle: 'medium', timeStyle: 'short' }) : archiveId;
+  if(!confirm(`Eliminar definitivamente el archivo del ${dateStr}?`)) return;
+  try{
+    await deleteDoc(doc(db, 'plans', archiveId));
+  }catch(e){
+    console.error('deleteArchive', e);
+    alert('Error borrando: ' + (e.code || e.message));
+  }
+}
+
+async function savePlan(){
+  if(!isEditorDirty()){ closeEditor(); return; }
+  const draft = local.editor.draft;
+  const cats = local.editor.cats;
+  const draftId = 'archive-' + new Date().toISOString().replace(/[:.]/g, '-');
+  const draftRef = doc(db, 'plans', draftId);
+  try{
+    await setDoc(draftRef, {
+      plan: draft,
+      name: (local.editor.name || '').trim() || 'Sin nombre',
+      archivedAt: serverTimestamp(),
+      archivedBy: currentUid,
+    });
+    // Las categorías son metadatos compartidos; se aplican al instante (no resetean ciclo).
+    if(JSON.stringify(cats) !== JSON.stringify(cloud.categories || {})){
+      await setDoc(CAT_DOC, {
+        ingredients: cats,
+        updatedAt: serverTimestamp(),
+        updatedBy: currentUid,
+      });
+    }
     local.editor = null;
     $editor.hidden = true;
     $appRoot.hidden = false;
     render();
+    alert('Borrador guardado en Historial. Ve a Ajustes → Historial → Activar para aplicarlo.');
   }catch(e){
     console.error('savePlan', e);
     alert('Error guardando el plan: ' + (e.code || e.message));
