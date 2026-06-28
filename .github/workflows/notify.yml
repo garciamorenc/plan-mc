@@ -1,0 +1,23 @@
+name: Notify defrost reminders
+
+on:
+  schedule:
+    # Cada hora en el minuto 5 (margen para que el snapshot esté quieto).
+    - cron: '5 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install firebase-admin
+        run: npm install firebase-admin@12 --no-save
+      - name: Run notifier
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          DEFROST_HOURS: '24'
+        run: node scripts/notify.mjs

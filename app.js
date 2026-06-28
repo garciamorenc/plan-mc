@@ -8,8 +8,11 @@ import {
   collection, query, orderBy, limit,
   increment, serverTimestamp, enableIndexedDbPersistence, deleteField
 } from 'https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js';
+import {
+  getMessaging, getToken, onMessage, isSupported as msgIsSupported
+} from 'https://www.gstatic.com/firebasejs/11.0.2/firebase-messaging.js';
 
-import { firebaseConfig, ALLOWED_UIDS } from './firebase-config.js';
+import { firebaseConfig, ALLOWED_UIDS, VAPID_KEY } from './firebase-config.js';
 import { DATA as SEED_PLAN, DAYS_ORDER, DAY_NAMES } from './data.js';
 import {
   CATALOG, CATEGORIES, CATEGORY_ICON, RECIPE_IDS,
@@ -37,7 +40,7 @@ const local = {
   tab: 'comidas',
 };
 const cloud = {
-  pantry: {}, cooked: {}, skipped: {}, dayMap: {}, cycleStartedAt: null,
+  pantry: {}, cooked: {}, skipped: {}, frozen: {}, dayMap: {}, cycleStartedAt: null,
   plan: null, planName: 'Plan inicial', planUpdatedAt: null,
   categories: {},
   archives: null,
@@ -140,6 +143,7 @@ onAuthStateChanged(auth, (user) => {
   $gate.hidden = true;
   $appRoot.hidden = false;
   subscribeState();
+  initMessaging();
 });
 
 function showGate(msg){
@@ -156,7 +160,7 @@ function subscribeState(){
     if(!snap.exists()){
       try{
         await setDoc(STATE_DOC, {
-          pantry: {}, cooked: {}, skipped: {}, dayMap: {},
+          pantry: {}, cooked: {}, skipped: {}, frozen: {}, dayMap: {},
           cycleStartedAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
           updatedBy: currentUid,
@@ -168,6 +172,7 @@ function subscribeState(){
     cloud.pantry = d.pantry || {};
     cloud.cooked = d.cooked || {};
     cloud.skipped = d.skipped || {};
+    cloud.frozen = d.frozen || {};
     cloud.dayMap = d.dayMap || {};
     cloud.cycleStartedAt = d.cycleStartedAt || null;
     cloud.ready = true;
@@ -228,6 +233,75 @@ function subscribeState(){
     rebuildCatalog(cloud.plan, cloud.categories);
     render();
   }, (err) => console.error('categories snapshot', err));
+}
+
+// ---------- Push notifications ----------
+let messagingInstance = null;
+let currentToken = null;
+const notifState = { permission: 'default', supported: false, ready: false };
+
+async function initMessaging(){
+  try{
+    notifState.supported = await msgIsSupported();
+  }catch(e){ notifState.supported = false; }
+  if(!notifState.supported){ notifState.ready = true; return; }
+  notifState.permission = typeof Notification !== 'undefined' ? Notification.permission : 'default';
+  notifState.ready = true;
+  if(notifState.permission === 'granted'){
+    await registerToken();
+  }
+  render();
+}
+
+async function registerToken(){
+  if(!notifState.supported) return;
+  if(!VAPID_KEY || VAPID_KEY.startsWith('TODO')) return;
+  try{
+    if(!messagingInstance) messagingInstance = getMessaging(app);
+    const reg = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
+    const token = await getToken(messagingInstance, { vapidKey: VAPID_KEY, serviceWorkerRegistration: reg });
+    if(!token) return;
+    currentToken = token;
+    // Mensajes en primer plano: el SW no muestra notificación; los pasamos por consola por ahora.
+    onMessage(messagingInstance, (payload) => {
+      console.log('Push en primer plano:', payload);
+    });
+    // Guardar token en users/{uid}.fcmTokens
+    const userRef = doc(db, 'users', currentUid);
+    await setDoc(userRef, {
+      fcmTokens: { [token]: {
+        ua: navigator.userAgent,
+        updatedAt: serverTimestamp(),
+      }},
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+  }catch(e){ console.error('registerToken', e); }
+}
+
+async function requestNotificationPermission(){
+  if(!notifState.supported){ alert('Tu navegador no soporta notificaciones push.'); return; }
+  try{
+    const perm = await Notification.requestPermission();
+    notifState.permission = perm;
+    if(perm === 'granted'){
+      await registerToken();
+    }
+    render();
+  }catch(e){ console.error('requestPermission', e); }
+}
+
+async function disableNotifications(){
+  if(!confirm('¿Desactivar notificaciones en este dispositivo?')) return;
+  try{
+    if(currentToken && currentUid){
+      await updateDoc(doc(db, 'users', currentUid), {
+        [`fcmTokens.${currentToken}`]: deleteField(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+    currentToken = null;
+  }catch(e){ console.error('disableNotifications', e); }
+  render();
 }
 
 function maybeBootAutoCook(){
@@ -391,6 +465,7 @@ async function markCooked(day, slot, persons){
       let pantry = { ...(d.pantry||{}) };
       let cooked = d.cooked || {};
       let skipped = d.skipped || {};
+      let frozen = { ...(d.frozen||{}) };
       const toMark = persons.filter(p => !isOn(cooked, k, p));
       if(toMark.length === 0) return;
       const deductedByPerson = {};
@@ -400,12 +475,59 @@ async function markCooked(day, slot, persons){
       }
       cooked = setCookedPersons(cooked, k, deductedByPerson);
       skipped = setPersons(skipped, k, toMark, false);
+      // Si toda la comida queda cocinada, la porción congelada se considera consumida.
+      const bothCooked = ['m','c'].every(p => isOn(cooked, k, p));
+      if(bothCooked) delete frozen[k];
       tx.update(STATE_DOC, {
-        pantry, cooked, skipped,
+        pantry, cooked, skipped, frozen,
         updatedAt: serverTimestamp(), updatedBy: currentUid
       });
     });
   }catch(e){ console.error('markCooked', e); }
+}
+
+function isItemFrozen(mk, id){
+  const v = cloud.frozen[mk];
+  if(!v) return false;
+  if(v === true) return true; // legacy: toda la comida estaba marcada
+  return !!v[id];
+}
+function frozenCount(mk){
+  const v = cloud.frozen[mk];
+  if(!v) return 0;
+  if(v === true) return -1; // legacy: todos
+  return Object.keys(v).length;
+}
+
+async function toggleFrozen(srcDay, slot, ingredientId){
+  const k = mealKey(srcDay, slot);
+  try{
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(STATE_DOC);
+      const d = snap.data() || {};
+      let frozen = { ...(d.frozen||{}) };
+      const v = frozen[k];
+      let cur;
+      if(v === true){
+        // Migración legacy: pasamos a objeto con todos los ingredientes de la comida.
+        const meal = (cloud.plan?.[srcDay]?.meals||[]).find(m => m.slot === slot);
+        cur = {};
+        for(const it of (meal?.items||[])) cur[slug(it.n)] = true;
+      } else if(v && typeof v === 'object'){
+        cur = { ...v };
+      } else {
+        cur = {};
+      }
+      if(cur[ingredientId]) delete cur[ingredientId];
+      else cur[ingredientId] = true;
+      if(Object.keys(cur).length === 0) delete frozen[k];
+      else frozen[k] = cur;
+      tx.update(STATE_DOC, {
+        frozen,
+        updatedAt: serverTimestamp(), updatedBy: currentUid,
+      });
+    });
+  }catch(e){ console.error('toggleFrozen', e); }
 }
 
 // viewDay sirve para saber si el día visible es pasado → marcamos skipped.
@@ -541,6 +663,7 @@ async function autoCookPastDays(){
       let pantry = { ...(d.pantry||{}) };
       let cooked = d.cooked || {};
       const skipped = d.skipped || {};
+      let frozen = { ...(d.frozen||{}) };
       let changed = false;
       for(const t of targets){
         if(isOn(cooked, t.k, t.person) || isOn(skipped, t.k, t.person)) continue;
@@ -550,8 +673,12 @@ async function autoCookPastDays(){
         changed = true;
       }
       if(!changed) return;
+      // Limpia frozen para comidas que quedan totalmente cocinadas.
+      for(const k of Object.keys(frozen)){
+        if(['m','c'].every(p => isOn(cooked, k, p))) delete frozen[k];
+      }
       tx.update(STATE_DOC, {
-        pantry, cooked,
+        pantry, cooked, frozen,
         updatedAt: serverTimestamp(), updatedBy: currentUid
       });
     });
@@ -576,7 +703,7 @@ async function maybeAutoReset(){
   try{
     await runTransaction(db, async (tx) => {
       tx.update(STATE_DOC, {
-        cooked: {}, skipped: {},
+        cooked: {}, skipped: {}, frozen: {},
         cycleStartedAt: serverTimestamp(),
         updatedAt: serverTimestamp(), updatedBy: currentUid,
       });
@@ -616,7 +743,7 @@ async function startNewWeek(){
       const snap = await tx.get(STATE_DOC);
       const d = snap.data() || {};
       tx.update(STATE_DOC, {
-        cooked: {}, skipped: {},
+        cooked: {}, skipped: {}, frozen: {},
         cycleStartedAt: serverTimestamp(),
         updatedAt: serverTimestamp(), updatedBy: currentUid,
         pantry: d.pantry || {},
@@ -756,8 +883,11 @@ function renderComidas(){
     const done = items.filter(it => local.mise.has(miseKey(mi, meal.items.indexOf(it)))).length;
     const shown = local.hideHave ? items.filter(it => !local.mise.has(miseKey(mi, meal.items.indexOf(it)))) : items;
 
-    html += `<section class="card ${cooked?'cooked':''}"><div class="card-head">
-      <div class="slot">${meal.slot}${meal.time?`<span class="time">${meal.time}</span>`:''}</div>
+    const frozenN = frozenCount(mk);
+    const anyFrozen = frozenN > 0 || frozenN === -1;
+    const badgeTxt = frozenN === -1 ? '❄ congelada' : `❄ ${frozenN}`;
+    html += `<section class="card ${cooked?'cooked':''} ${anyFrozen?'frozen':''}"><div class="card-head">
+      <div class="slot">${meal.slot}${meal.time?`<span class="time">${meal.time}</span>`:''}${anyFrozen?` <span class="frozen-badge">${badgeTxt}</span>`:''}</div>
       <div class="progress${done===total&&total>0?' done':''}">${done}/${total} listo${total!==1?'s':''}</div></div>`;
     if(meal.dish) html += `<div class="dish">${meal.dish}</div>`;
     html += `<ul class="rows">`;
@@ -765,9 +895,11 @@ function renderComidas(){
       const ii = meal.items.indexOf(it);
       const k = miseKey(mi, ii);
       const ck = local.mise.has(k);
+      const itemFrozen = isItemFrozen(mk, it.id);
       html += `<li class="row${ck?' checked':''}" data-k="${k}"><span class="box">${CHK}</span>
         <span class="name">${it.n}${it.note?`<span class="note">${it.note}</span>`:''}</span>
-        <span class="qty">${qtyHTML(it)}</span></li>`;
+        <span class="qty">${qtyHTML(it)}</span>
+        <button class="ingr-freeze${itemFrozen?' on':''}" data-slot="${meal.slot}" data-id="${it.id}" title="${itemFrozen?'Quitar congelado':'Marcar congelado'}">❄</button></li>`;
     });
     html += `</ul>`;
     if(meal.prep){
@@ -813,6 +945,12 @@ function renderComidas(){
   });
   $main.querySelectorAll('.btn-undo').forEach(b => {
     b.onclick = () => undoCooked(src, b.dataset.slot, local.day, personsForView());
+  });
+  $main.querySelectorAll('.ingr-freeze').forEach(b => {
+    b.onclick = (e) => {
+      e.stopPropagation();
+      toggleFrozen(src, b.dataset.slot, b.dataset.id);
+    };
   });
 }
 
@@ -1036,6 +1174,29 @@ function renderAjustes(){
   }
   html += `</ul></section>`;
 
+  // Notificaciones push
+  html += `<section class="card cat-card"><div class="cat-title"><span class="cat-ic">🔔</span>Notificaciones</div>`;
+  if(!notifState.ready){
+    html += `<p class="ajustes-help">Cargando…</p>`;
+  } else if(!notifState.supported){
+    html += `<p class="ajustes-help">Este navegador no soporta notificaciones push. En iPhone debes <strong>instalar la app en pantalla de inicio</strong> con Safari para que funcionen.</p>`;
+  } else if(!VAPID_KEY || VAPID_KEY.startsWith('TODO')){
+    html += `<p class="ajustes-help">Falta la clave VAPID en <code>firebase-config.js</code>. Consulta el README.</p>`;
+  } else if(notifState.permission === 'granted'){
+    html += `<p class="ajustes-help">Activadas en este dispositivo. Recibirás un aviso ~24 h antes de cada comida con ingredientes congelados.</p>
+      <div class="ajustes-actions">
+        <button id="notif-disable-btn" class="btn-secondary">Desactivar en este dispositivo</button>
+      </div>`;
+  } else if(notifState.permission === 'denied'){
+    html += `<p class="ajustes-help">Permiso de notificaciones bloqueado. Cámbialo desde los ajustes del navegador y recarga.</p>`;
+  } else {
+    html += `<p class="ajustes-help">Avisos automáticos 24 h antes de cada comida con ingredientes congelados.</p>
+      <div class="ajustes-actions">
+        <button id="notif-enable-btn" class="btn-secondary">Activar notificaciones</button>
+      </div>`;
+  }
+  html += `</section>`;
+
   html += `<section class="card cat-card"><div class="cat-title"><span class="cat-ic">🔄</span>Ciclo semanal</div>
     <p class="ajustes-help">Cada lunes el ciclo se reinicia automáticamente (cocinadas y desactivaciones de planificación se borran). Si necesitas forzar un reinicio mid-semana, púlsalo aquí.</p>
     <div class="ajustes-actions">
@@ -1056,6 +1217,8 @@ function renderAjustes(){
     b.onclick = () => toggleDay(b.dataset.day, b.dataset.action === 'skip');
   });
   document.getElementById('new-week-btn-ajustes').onclick = startNewWeek;
+  document.getElementById('notif-enable-btn')?.addEventListener('click', requestNotificationPermission);
+  document.getElementById('notif-disable-btn')?.addEventListener('click', disableNotifications);
   $main.querySelector('.edit-active').onclick = () => openEditor();
   $main.querySelectorAll('.archive-restore').forEach(b => {
     b.onclick = () => restoreArchive(b.dataset.id);
@@ -1473,7 +1636,7 @@ async function restoreArchive(archiveId){
         updatedBy: currentUid,
       });
       tx.update(STATE_DOC, {
-        cooked: {}, skipped: {},
+        cooked: {}, skipped: {}, frozen: {},
         cycleStartedAt: serverTimestamp(),
         updatedAt: serverTimestamp(), updatedBy: currentUid,
       });

@@ -18,6 +18,9 @@ service cloud.firestore {
     match /categories/main {
       allow read, write: if isAllowed();
     }
+    match /users/{uid} {
+      allow read, write: if isAllowed() && request.auth.uid == uid;
+    }
     match /{document=**} {
       allow read, write: if false;
     }

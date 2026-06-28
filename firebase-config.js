@@ -24,3 +24,8 @@ export const ALLOWED_UIDS = [
   "SWNOoQ2jESbAYndKSrjn8IashRy1",
   "LebxC4ZYjdQJw81kTYamZcJLWIh1"
 ];
+
+// VAPID key para Firebase Cloud Messaging Web.
+// Cómo obtenerla: Firebase Console → Project Settings → Cloud Messaging
+// → "Web push certificates" → Generate key pair. Pega aquí la clave (empieza por "B...").
+export const VAPID_KEY = "BM9aPcsf0RtgVcVnRG2CrH8mZLrNIXOoLEydhoghcUDLSKvP46JKIpquWQfUMS67wTwwPLT7tEyIINPzhLXshL0";
