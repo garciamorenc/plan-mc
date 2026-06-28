@@ -2,9 +2,10 @@ name: Defrost daily digest
 
 on:
   schedule:
-    # 07:00 UTC = 09:00 Madrid en verano (CEST), 08:00 en invierno (CET).
-    # Una sola ejecución al día.
-    - cron: '0 7 * * *'
+    # 20:00 Madrid → 18:00 UTC en verano (CEST) y 19:00 UTC en invierno (CET).
+    # Disparamos ambas y el script ignora la que no toque mediante HOUR_GUARD.
+    - cron: '0 18 * * *'
+    - cron: '0 19 * * *'
   workflow_dispatch:
     inputs:
       window_hours:
@@ -15,6 +16,10 @@ on:
         description: 'true para reenviar aunque ya se haya notificado hoy.'
         required: false
         default: 'false'
+      skip_hour_guard:
+        description: 'true para saltarse el control de hora 20:00 Madrid (manual).'
+        required: false
+        default: 'true'
 
 jobs:
   run:
@@ -31,4 +36,7 @@ jobs:
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
           WINDOW_HOURS: ${{ github.event.inputs.window_hours || '48' }}
           FORCE: ${{ github.event.inputs.force || 'false' }}
+          # En ejecución manual respetamos el input. En cron forzamos guard=false (chequeo activo).
+          SKIP_HOUR_GUARD: ${{ github.event.inputs.skip_hour_guard || 'false' }}
+          TARGET_HOUR_MADRID: '20'
         run: node scripts/notify.mjs

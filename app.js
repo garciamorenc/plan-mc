@@ -280,7 +280,7 @@ async function registerToken(){
 }
 
 async function requestNotificationPermission(){
-  if(!notifState.supported){ alert('Tu navegador no soporta notificaciones push.'); return; }
+  if(!notifState.supported){ toast('Este navegador no soporta notificaciones push.', 'error'); return; }
   try{
     const perm = await Notification.requestPermission();
     notifState.permission = perm;
@@ -493,6 +493,82 @@ function isItemFrozen(mk, id){
   if(v === true) return true; // legacy: toda la comida estaba marcada
   return !!v[id];
 }
+// Devuelve fecha JS (local) de la comida (viewDay, time) en el ciclo actual.
+function computeMealDateLocal(viewDay, time){
+  const codeToJs = CODE_TO_JS;
+  const target = codeToJs[viewDay];
+  if(target == null) return null;
+  let base;
+  const start = cloud.cycleStartedAt?.toDate ? cloud.cycleStartedAt.toDate() : null;
+  const now = new Date();
+  if(!start){
+    base = new Date(now); base.setHours(0,0,0,0);
+    const dow = base.getDay();
+    const off = dow === 0 ? -6 : 1 - dow;
+    base.setDate(base.getDate() + off);
+  } else {
+    const startMid = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+    const todayMid = new Date(); todayMid.setHours(0,0,0,0);
+    const daysSinceStart = Math.floor((todayMid - startMid) / 86400000);
+    if(daysSinceStart >= 7){
+      base = new Date(now); base.setHours(0,0,0,0);
+      const dow = base.getDay();
+      const off = dow === 0 ? -6 : 1 - dow;
+      base.setDate(base.getDate() + off);
+    } else {
+      base = startMid;
+    }
+  }
+  const baseWk = base.getDay();
+  const offset = (target - baseWk + 7) % 7;
+  const date = new Date(base);
+  date.setDate(date.getDate() + offset);
+  const [hh, mm] = (time || '13:00').split(':').map(n => parseInt(n, 10) || 0);
+  date.setHours(hh, mm, 0, 0);
+  return date;
+}
+
+function relativeDayLabel(date){
+  const a = new Date(date); a.setHours(0,0,0,0);
+  const b = new Date(); b.setHours(0,0,0,0);
+  const days = Math.round((a - b) / 86400000);
+  if(days <= 0) return 'hoy';
+  if(days === 1) return 'mañana';
+  if(days === 2) return 'pasado mañana';
+  return DAY_NAMES[WEEKDAY_MAP[a.getDay()]] || '';
+}
+
+// Lista comidas en próximas 48 h con ingredientes congelados (no cocinadas ni saltadas por ambos).
+function computeDefrostReminders(){
+  const now = new Date();
+  const out = [];
+  for(const viewDay of DAYS_ORDER){
+    const src = sourceDay(viewDay);
+    const meals = cloud.plan?.[src]?.meals || [];
+    for(const meal of meals){
+      if(meal.free || !meal.items) continue;
+      const k = mealKey(src, meal.slot);
+      const fmap = cloud.frozen[k];
+      if(!fmap) continue;
+      const ck = cloud.cooked[k];
+      const cookedBoth = ck === true || (ck && typeof ck === 'object' && ck.m && ck.c);
+      if(cookedBoth) continue;
+      const sk = cloud.skipped[k];
+      const skippedBoth = sk === true || (sk && typeof sk === 'object' && sk.m && sk.c);
+      if(skippedBoth) continue;
+      const ids = fmap === true ? meal.items.map(it => slug(it.n)) : Object.keys(fmap).filter(id => fmap[id]);
+      if(ids.length === 0) continue;
+      const date = computeMealDateLocal(viewDay, meal.time);
+      if(!date) continue;
+      const hoursAhead = (date - now) / 3600000;
+      if(hoursAhead < -2 || hoursAhead > 48) continue;
+      const names = meal.items.filter(it => ids.includes(slug(it.n))).map(it => it.n);
+      out.push({ viewDay, slot: meal.slot, mealDate: date, names });
+    }
+  }
+  return out.sort((a, b) => a.mealDate - b.mealDate);
+}
+
 function frozenCount(mk){
   const v = cloud.frozen[mk];
   if(!v) return 0;
@@ -868,7 +944,17 @@ function renderComidas(){
     return `<span class="solo c">${c}<span class="u">${u}</span></span>`;
   };
 
+  // Banner de descongelar para próximas 48h
+  const reminders = computeDefrostReminders();
   let html = '';
+  if(reminders.length > 0){
+    html += `<div class="defrost-banner"><div class="defrost-banner-head">❄ Descongela para las próximas 48 h</div><ul class="defrost-list">`;
+    for(const r of reminders){
+      const when = relativeDayLabel(r.mealDate);
+      html += `<li><strong>${when} · ${r.slot.toLowerCase()}</strong>: ${escText(r.names.join(', '))}</li>`;
+    }
+    html += `</ul></div>`;
+  }
   day.meals.forEach((meal, mi) => {
     if(meal.free){
       html += `<section class="card"><div class="card-head"><div class="slot">${meal.slot}${meal.time?`<span class="time">${meal.time}</span>`:''}</div></div><div class="freemsg">${meal.free}</div></section>`;
@@ -1276,6 +1362,17 @@ const $edCancel = document.getElementById('ed-cancel');
 
 const deepCopy = (o) => JSON.parse(JSON.stringify(o));
 
+let toastTimeout = null;
+function toast(msg, type = 'info', duration = 3500){
+  const el = document.getElementById('toast');
+  if(!el) return;
+  el.textContent = msg;
+  el.className = `toast ${type}`;
+  el.hidden = false;
+  clearTimeout(toastTimeout);
+  toastTimeout = setTimeout(() => { el.hidden = true; }, duration);
+}
+
 function openEditor(planSource, sourceName){
   local.editor = {
     open: true,
@@ -1292,7 +1389,7 @@ function openEditor(planSource, sourceName){
 
 function editArchive(archiveId){
   const arc = (cloud.archives || []).find(a => a.id === archiveId);
-  if(!arc || !arc.plan){ alert('Archivo no encontrado o vacío'); return; }
+  if(!arc || !arc.plan){ toast('Archivo no encontrado o vacío', 'error'); return; }
   openEditor(arc.plan, arc.name);
 }
 
@@ -1614,7 +1711,7 @@ function markDirty(){
 
 async function restoreArchive(archiveId){
   const arc = (cloud.archives || []).find(a => a.id === archiveId);
-  if(!arc || !arc.plan){ alert('Archivo no encontrado o vacío'); return; }
+  if(!arc || !arc.plan){ toast('Archivo no encontrado o vacío', 'error'); return; }
   if(!confirm(`Activar "${arc.name}". El plan actual pasará al histórico y se reiniciará la semana (comidas hechas + planificación). ¿Continuar?`)) return;
   const newArchiveId = 'archive-' + new Date().toISOString().replace(/[:.]/g, '-');
   const newArchiveRef = doc(db, 'plans', newArchiveId);
@@ -1645,7 +1742,7 @@ async function restoreArchive(archiveId){
     autoCookDone = false;
   }catch(e){
     console.error('restoreArchive', e);
-    alert('Error restaurando: ' + (e.code || e.message));
+    toast('Error restaurando: ' + (e.code || e.message), 'error');
   }
 }
 
@@ -1657,7 +1754,7 @@ async function deleteArchive(archiveId){
     await deleteDoc(doc(db, 'plans', archiveId));
   }catch(e){
     console.error('deleteArchive', e);
-    alert('Error borrando: ' + (e.code || e.message));
+    toast('Error borrando: ' + (e.code || e.message), 'error');
   }
 }
 
@@ -1686,9 +1783,9 @@ async function savePlan(){
     $editor.hidden = true;
     $appRoot.hidden = false;
     render();
-    alert('Borrador guardado en Historial. Ve a Ajustes → Historial → Activar para aplicarlo.');
+    toast('Borrador guardado. Ve a Ajustes → Planes para activarlo.', 'success', 5000);
   }catch(e){
     console.error('savePlan', e);
-    alert('Error guardando el plan: ' + (e.code || e.message));
+    toast('Error guardando el plan: ' + (e.code || e.message), 'error');
   }
 }

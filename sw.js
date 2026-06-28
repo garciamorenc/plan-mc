@@ -1,4 +1,4 @@
-const CACHE = 'plan-mc-v43';
+const CACHE = 'plan-mc-v44';
 const ASSETS = [
   './',
   './index.html',

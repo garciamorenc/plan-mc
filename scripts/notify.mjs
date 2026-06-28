@@ -66,7 +66,21 @@ function relativeDayLabel(mealDate, now){
   return DAY_NAMES[wk] || '';
 }
 
+function madridHour(){
+  const s = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Madrid', hour: '2-digit', hour12: false }).format(new Date());
+  return parseInt(s, 10);
+}
+
 async function run(){
+  // Guard de hora local: solo se dispara cuando el reloj de Madrid coincide con TARGET_HOUR_MADRID.
+  if((process.env.SKIP_HOUR_GUARD || '').toLowerCase() !== 'true'){
+    const target = parseInt(process.env.TARGET_HOUR_MADRID || '20', 10);
+    const h = madridHour();
+    if(h !== target){
+      console.log(`Hora Madrid ${h}h ≠ objetivo ${target}h, no se envía.`);
+      return;
+    }
+  }
   const stateSnap = await db.doc('state/main').get();
   const planSnap = await db.doc('plan/current').get();
   if(!stateSnap.exists || !planSnap.exists){ console.log('Faltan state o plan'); return; }
