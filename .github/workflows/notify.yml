@@ -4,7 +4,12 @@ on:
   schedule:
     # Cada hora en el minuto 5 (margen para que el snapshot esté quieto).
     - cron: '5 * * * *'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      defrost_hours:
+        description: 'Antelación en horas (24 = aviso 24 h antes). Para probar tonight pon un valor que case con tu caso.'
+        required: false
+        default: '24'
 
 jobs:
   run:
@@ -19,5 +24,5 @@ jobs:
       - name: Run notifier
         env:
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
-          DEFROST_HOURS: '24'
+          DEFROST_HOURS: ${{ github.event.inputs.defrost_hours || '24' }}
         run: node scripts/notify.mjs
